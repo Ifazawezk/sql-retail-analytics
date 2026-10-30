@@ -33,6 +33,35 @@ EXPECTED_COLUMNS = {
                                    "refunds_qar", "top_reason"],
     "10_ramadan_vs_rest.sql": ["year", "period", "days", "avg_daily_orders", "avg_daily_revenue_qar",
                                "avg_order_value_qar", "revenue_uplift_pct"],
+    "11_mom_growth.sql": ["month", "revenue_qar", "previous_month_qar", "change_qar", "mom_change_pct"],
+    "12_yoy_category_growth.sql": ["category", "revenue_2024_qar", "revenue_2025_qar", "change_qar",
+                                   "yoy_growth_pct"],
+    "13_running_total.sql": ["month", "revenue_qar", "year_to_date_qar", "pct_of_full_year"],
+    "14_branch_monthly_leader.sql": ["month", "leader", "leader_revenue_qar", "runner_up", "lead_qar",
+                                     "branches_trading"],
+    "15_top3_per_category.sql": ["category", "rank_in_category", "product", "units_sold", "revenue_qar",
+                                 "category_unit_share_pct"],
+    "16_top_customers.sql": ["customer_id", "customer", "home_branch", "orders", "lifetime_spend_qar",
+                             "avg_order_value_qar", "first_order", "last_order",
+                             "avg_days_between_orders"],
+    "17_rfm_segments.sql": ["segment", "customers", "avg_recency_days", "avg_orders", "avg_m_score",
+                            "avg_spend_qar", "revenue_share_pct"],
+    "18_cohort_retention.sql": ["cohort", "customers", "month_1_pct", "month_2_pct", "month_3_pct",
+                                "month_6_pct", "month_12_pct"],
+    "19_basket_pairs.sql": ["product_a", "product_b", "orders_together", "support_pct",
+                            "confidence_a_to_b", "lift"],
+    "20_branch_scorecard.sql": ["year", "branch", "trading_days", "revenue_qar", "revenue_per_day_qar",
+                                "annual_sales_per_sqm_qar", "rank_by_revenue", "rank_by_daily_revenue",
+                                "rank_by_density"],
+    "21_rolling_7day_peaks.sql": ["month", "peak_day", "rolling_7d_avg_qar", "events_in_window"],
+    "22_overdue_customers.sql": ["customer_id", "customer", "home_branch", "orders", "avg_gap_days",
+                                 "last_order", "days_since_last_order", "lifetime_spend_qar"],
+    "23_discount_impact.sql": ["year", "price_type", "lines", "units", "revenue_qar", "revenue_share_pct",
+                               "discount_given_qar", "avg_discount_pct", "gross_margin_pct"],
+    "24_ramadan_shopping_hours.sql": ["time_band", "ramadan_orders", "ramadan_share_pct", "other_orders",
+                                      "other_share_pct"],
+    "25_delivery_trend.sql": ["quarter", "orders", "delivery_orders", "delivery_order_share_pct",
+                              "delivery_revenue_share_pct", "share_change_pts"],
 }
 
 DAYS_IN_DATA = 731  # 2024 is a leap year, so 366 + 365
@@ -197,3 +226,161 @@ def test_ramadan_days_are_busier(query):
     assert len(ramadan) == 2
     for row in ramadan:
         assert row["revenue_uplift_pct"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Invariants for queries 11-25
+# ---------------------------------------------------------------------------
+
+def test_mom_growth_matches_monthly_revenue(query):
+    monthly = query("01_monthly_revenue.sql").column("revenue_qar")
+    rows = query("11_mom_growth.sql").rows
+    assert [r["revenue_qar"] for r in rows] == monthly
+    assert rows[0]["previous_month_qar"] is None
+    assert rows[0]["mom_change_pct"] is None
+    for prev, row in zip(rows, rows[1:]):
+        assert row["previous_month_qar"] == prev["revenue_qar"]
+        assert row["change_qar"] == pytest.approx(row["revenue_qar"] - prev["revenue_qar"], abs=0.02)
+
+
+def test_yoy_columns_add_up_to_each_year(query, totals):
+    result = query("12_yoy_category_growth.sql")
+    approx_sum(result.column("revenue_2024_qar"), totals["yearly_revenue"]["2024"])
+    approx_sum(result.column("revenue_2025_qar"), totals["yearly_revenue"]["2025"])
+
+
+def test_running_total_ends_at_each_year_total(query, totals):
+    rows = query("13_running_total.sql").rows
+    for year, revenue in totals["yearly_revenue"].items():
+        year_rows = [r for r in rows if r["month"].startswith(year)]
+        ytd = [r["year_to_date_qar"] for r in year_rows]
+        assert ytd == sorted(ytd)
+        assert ytd[-1] == pytest.approx(revenue, abs=0.01)
+        assert year_rows[-1]["pct_of_full_year"] == 100.0
+
+
+def test_branch_leader_beats_runner_up(query):
+    rows = query("14_branch_monthly_leader.sql").rows
+    assert len(rows) == 24
+    for row in rows:
+        assert row["leader"] != row["runner_up"]
+        assert row["lead_qar"] >= 0
+        # Lusail opened on 2024-09-15, so it trades from September 2024.
+        assert row["branches_trading"] == (5 if row["month"] >= "2024-09" else 4)
+
+
+def test_top3_per_category(query, db_path):
+    rows = query("15_top3_per_category.sql").rows
+    conn = sqlite3.connect(db_path)
+    n_categories, = conn.execute("SELECT COUNT(*) FROM categories").fetchone()
+    conn.close()
+    by_category = {}
+    for row in rows:
+        by_category.setdefault(row["category"], []).append(row)
+    assert len(by_category) == n_categories
+    for products in by_category.values():
+        assert [p["rank_in_category"] for p in products] == [1, 2, 3]
+        units = [p["units_sold"] for p in products]
+        assert units == sorted(units, reverse=True)
+
+
+def test_top_customers_sorted_by_spend(query):
+    rows = query("16_top_customers.sql").rows
+    assert len(rows) == 10
+    spend = [r["lifetime_spend_qar"] for r in rows]
+    assert spend == sorted(spend, reverse=True)
+    for row in rows:
+        assert row["first_order"] <= row["last_order"]
+
+
+def test_rfm_segments_cover_every_customer(query, totals):
+    result = query("17_rfm_segments.sql")
+    assert sum(result.column("customers")) == totals["customers"]
+    assert sum(result.column("revenue_share_pct")) == pytest.approx(100, abs=0.5)
+    assert set(result.column("segment")) <= {
+        "Champions", "Loyal", "Promising", "Needs attention", "At risk", "Lost"}
+    by_segment = {r["segment"]: r for r in result.rows}
+    assert by_segment["Champions"]["avg_recency_days"] < by_segment["Lost"]["avg_recency_days"]
+
+
+def test_cohort_retention(query, totals):
+    rows = query("18_cohort_retention.sql").rows
+    assert sum(r["customers"] for r in rows) == totals["customers"]
+    pct_columns = ["month_1_pct", "month_2_pct", "month_3_pct", "month_6_pct", "month_12_pct"]
+    for row in rows:
+        for col in pct_columns:
+            assert row[col] is None or 0 <= row[col] <= 100
+    # The first cohort can be followed for a full year; the last cannot.
+    assert rows[0]["cohort"] == "2024-01" and rows[0]["month_12_pct"] is not None
+    assert rows[-1]["cohort"] == "2025-12" and rows[-1]["month_1_pct"] is None
+
+
+def test_basket_pairs_are_real_associations(query):
+    rows = query("19_basket_pairs.sql").rows
+    assert 0 < len(rows) <= 15
+    lifts = [r["lift"] for r in rows]
+    assert lifts == sorted(lifts, reverse=True)
+    for row in rows:
+        assert row["lift"] > 1
+        assert 0 < row["confidence_a_to_b"] <= 1
+        assert row["orders_together"] >= 15
+
+
+def test_branch_scorecard_counts_trading_days(query, totals):
+    rows = query("20_branch_scorecard.sql").rows
+    assert len(rows) == 10
+    days = {(r["year"], r["branch"]): r["trading_days"] for r in rows}
+    assert days[("2024", "Lusail")] == 108
+    assert days[("2024", "Al Sadd")] == 366
+    assert days[("2025", "Lusail")] == 365
+    approx_sum([r["revenue_qar"] for r in rows if r["year"] == "2024"], totals["yearly_revenue"]["2024"])
+
+
+def test_rolling_peaks_fall_in_their_month(query):
+    rows = query("21_rolling_7day_peaks.sql").rows
+    assert len(rows) == 24
+    for row in rows:
+        assert row["peak_day"].startswith(row["month"])
+        assert row["rolling_7d_avg_qar"] > 0
+    march_2025 = next(r for r in rows if r["month"] == "2025-03")
+    assert "Ramadan 2025" in march_2025["events_in_window"]
+
+
+def test_overdue_customers_meet_the_rule(query):
+    rows = query("22_overdue_customers.sql").rows
+    assert len(rows) <= 15
+    for row in rows:
+        assert row["orders"] >= 5
+        assert row["days_since_last_order"] >= 30
+        assert row["days_since_last_order"] > 3 * row["avg_gap_days"] - 0.1
+
+
+def test_discount_split_adds_up(query, totals):
+    rows = query("23_discount_impact.sql").rows
+    approx_sum([r["revenue_qar"] for r in rows], totals["revenue"])
+    for row in rows:
+        if row["price_type"] == "Full price":
+            assert row["discount_given_qar"] == 0
+        else:
+            assert row["discount_given_qar"] > 0
+            assert row["gross_margin_pct"] < next(
+                r["gross_margin_pct"] for r in rows
+                if r["year"] == row["year"] and r["price_type"] == "Full price")
+
+
+def test_ramadan_shifts_shopping_later(query):
+    rows = {r["time_band"]: r for r in query("24_ramadan_shopping_hours.sql").rows}
+    assert sum(r["ramadan_share_pct"] for r in rows.values()) == pytest.approx(100, abs=0.5)
+    assert sum(r["other_share_pct"] for r in rows.values()) == pytest.approx(100, abs=0.5)
+    late = rows["Late night (22:00-23:59)"]
+    before_iftar = rows["Late afternoon (16:00-18:59)"]
+    assert late["ramadan_share_pct"] > late["other_share_pct"]
+    assert before_iftar["ramadan_share_pct"] < before_iftar["other_share_pct"]
+
+
+def test_delivery_trend(query, totals):
+    rows = query("25_delivery_trend.sql").rows
+    assert len(rows) == 8
+    assert rows[0]["quarter"] == "2024-Q1" and rows[-1]["quarter"] == "2025-Q4"
+    assert sum(r["orders"] for r in rows) == totals["orders"]
+    assert rows[-1]["delivery_order_share_pct"] > rows[0]["delivery_order_share_pct"]
