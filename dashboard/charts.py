@@ -11,7 +11,7 @@ GRID = "#e1e0d9"
 BASELINE = "#c3c2b7"
 BLUE = "#2a78d6"
 MUTED = "#c3c2b7"
-# Colour-blind checked in this order. A branch keeps its colour on every chart.
+# Colour-blind checked in this order.
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"]
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
@@ -63,6 +63,24 @@ def grouped_bars(frame: pd.DataFrame, group: str, series: str, value: str, title
             tooltip=[group, series, alt.Tooltip(value, format=number_format)],
         )
     )
+
+
+def daily_revenue(daily: pd.DataFrame) -> alt.TopLevelMixin:
+    """Each day as a quiet bar. The 7-day average starts once seven days exist."""
+    data = daily.assign(
+        day=pd.to_datetime(daily["date"]),
+        average=daily["revenue_qar"].rolling(7).mean().round(2),
+    )
+    x = alt.X("day:T", title=None, axis=alt.Axis(format="%d %b %y", grid=False, labelAngle=0))
+    bars = alt.Chart(data).mark_bar(color=MUTED).encode(
+        x=x, y=alt.Y("revenue_qar:Q", title="Revenue (QAR)", axis=alt.Axis(format=",.0f")),
+        tooltip=["date", alt.Tooltip("revenue_qar", format=",.2f", title="Revenue (QAR)"), "orders"],
+    )
+    line = alt.Chart(data).mark_line(color=BLUE, strokeWidth=2).encode(
+        x=x, y="average:Q",
+        tooltip=["date", alt.Tooltip("average", format=",.2f", title="7-day average (QAR)")],
+    )
+    return finish(bars + line, height=280)
 
 
 def monthly_revenue(monthly: pd.DataFrame) -> alt.TopLevelMixin:

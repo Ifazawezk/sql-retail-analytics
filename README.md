@@ -92,6 +92,7 @@ files `python run.py` prints, and a test fails if SQL appears in its Python code
 | Branch ranking | Revenue per trading day and sales per square metre, by year | Q20, Q02 |
 | Customers | RFM segments and monthly cohort retention | Q17, Q18 |
 | Basket pairs | Pairs bought together, ranked by lift | Q19 |
+| Branch manager | One branch and date range: sales, change on the period before, top products, CSV | `queries/manager/` |
 
 Each section has a finding such as "Friday and Saturday, the weekend in Qatar,
 averaged QAR 677 a day against QAR 463 from Sunday to Thursday". The sentences
@@ -106,6 +107,25 @@ of its numbers below it.
 
 ![Customers page](docs/screenshots/customers.png)
 
+### Branch manager view
+
+Pick a branch and a date range to see that branch's revenue, orders, average
+order, gross margin, delivery share and return rate, each compared with the same
+number of days before. The daily sales for those dates download as a CSV, and
+the last column of the file says the data is simulated.
+
+Filters need parameters, so this page runs the files in `queries/manager/`. They
+are ordinary .sql files that take `:branch_id`, `:start_date` and `:end_date`.
+Three rules keep the numbers fair:
+
+- A day with no orders counts as zero, but days before a branch opened do not count at all.
+- If the period before is cut short by the opening date or the start of the data, no change is shown. Comparing with half a period would give a large growth figure that means nothing.
+- A link can open the page on a branch and dates, for example `?view=manager&branch=Lusail&start=2025-02-01&end=2025-04-30`.
+
+![Branch manager page](docs/screenshots/branch_manager.png)
+
+### How the screenshots were taken
+
 The screenshots are real captures of the running app, taken with headless Edge
 by `python tools/take_screenshots.py`. The script stops without saving if a page
 shows an error or has no simulated-data notice. The other pages are in
@@ -118,6 +138,7 @@ schema.sql                  tables, keys, checks and indexes
 seed.py                     builds retail.db
 run.py                      runs the queries and prints tables
 queries/                    one .sql file per business question
+queries/manager/            parameterised .sql files for the branch manager page
 app.py                      Streamlit entry point
 dashboard/                  data loading, written findings, charts and pages
 tools/take_screenshots.py   captures the README screenshots with headless Edge

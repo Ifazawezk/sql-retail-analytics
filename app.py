@@ -20,6 +20,7 @@ st.sidebar.warning(SIMULATED_NOTE)
 st.sidebar.caption("Every number comes from the SQL files in `queries/`, run against a generated SQLite database.")
 
 if requested != slug:
+    st.query_params.clear()
     st.query_params["view"] = slug
 
 PAGES[slug][1]()

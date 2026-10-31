@@ -50,6 +50,7 @@ SHOTS = {
     "branch_ranking": "view=branches",
     "customers": "view=customers",
     "basket_pairs": "view=baskets",
+    "branch_manager": "view=manager&branch=Lusail&start=2025-02-01&end=2025-04-30",
 }
 
 PAGE_STATE = """(() => {

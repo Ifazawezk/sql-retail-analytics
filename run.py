@@ -58,10 +58,10 @@ def read_question(sql: str) -> str:
     return "(no question given)"
 
 
-def run_query(conn: sqlite3.Connection, path: Path) -> QueryResult:
+def run_query(conn: sqlite3.Connection, path: Path, params: dict | None = None) -> QueryResult:
     sql = path.read_text(encoding="utf-8")
     started = time.perf_counter()
-    cursor = conn.execute(sql)
+    cursor = conn.execute(sql, params or {})
     rows = cursor.fetchall()
     elapsed = time.perf_counter() - started
     columns = [d[0] for d in cursor.description]

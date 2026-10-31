@@ -38,9 +38,18 @@ def ensure_database(path: Path | None = None) -> Path:
     return path
 
 
+def _run_file(path: Path, params: dict | None, db_path: Path | None) -> Loaded:
+    with closing(run.connect_read_only(ensure_database(db_path))) as conn:
+        result = run.run_query(conn, path, params)
+    name = path.relative_to(run.QUERY_DIR).as_posix()
+    return Loaded(name, result.question, pd.DataFrame(result.rows, columns=result.columns))
+
+
 def load_query(number: int, db_path: Path | None = None) -> Loaded:
     """Run one numbered query file and return its rows as a DataFrame."""
-    path = run.query_files([number])[0]
-    with closing(run.connect_read_only(ensure_database(db_path))) as conn:
-        result = run.run_query(conn, path)
-    return Loaded(path.name, result.question, pd.DataFrame(result.rows, columns=result.columns))
+    return _run_file(run.query_files([number])[0], None, db_path)
+
+
+def load_sql(name: str, params: dict | None = None, db_path: Path | None = None) -> Loaded:
+    """Run a query file by its path inside queries/, with optional parameters."""
+    return _run_file(run.QUERY_DIR / name, params, db_path)

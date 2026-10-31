@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 import streamlit as st
 
-from dashboard import charts, findings
-from dashboard.data import Loaded, ensure_database, load_query
+from dashboard import charts, findings, manager
+from dashboard.data import Loaded, ensure_database, load_query, load_sql
 
 
 @st.cache_data(max_entries=40, show_spinner=False)
@@ -17,6 +19,17 @@ def query(number: int) -> Loaded:
     """Run a query file once per database build."""
     path = ensure_database()
     return _load(number, (str(path), path.stat().st_mtime_ns))
+
+
+@st.cache_data(max_entries=40, show_spinner=False)
+def _load_sql(name: str, params: tuple, stamp: tuple[str, int]) -> Loaded:
+    return load_sql(name, dict(params))
+
+
+def sql_file(name: str, **params) -> Loaded:
+    """Run a parameterised query file, keeping only the latest few results."""
+    path = ensure_database()
+    return _load_sql(name, tuple(sorted(params.items())), (str(path), path.stat().st_mtime_ns))
 
 
 def show_finding(text: str) -> None:
@@ -135,10 +148,78 @@ def baskets_page() -> None:
     show_sources(pairs)
 
 
+def show_period_metrics(current: manager.Totals, previous: manager.Totals | None) -> None:
+    columns = st.columns(6)
+    for column, metric in zip(columns, manager.metrics(current, previous)):
+        column.metric(metric.label, metric.value, delta=metric.delta, delta_color=metric.delta_color)
+
+
+def manager_page() -> None:
+    st.header("Branch manager")
+    branches = sql_file("manager/branch_list.sql").frame
+    first_day = dt.date.fromisoformat(branches["first_order_day"].min())
+    last_day = dt.date.fromisoformat(branches["last_order_day"].max())
+    names = list(branches["branch"])
+
+    # Links can open the page on a branch and dates. They only set the starting
+    # point, so afterwards the filters belong to the person using them.
+    if "manager_branch" not in st.session_state:
+        st.session_state["manager_branch"], st.session_state["manager_dates"] = manager.starting_filters(
+            st.query_params, names, first_day, last_day)
+
+    left, right = st.columns([1, 2])
+    branch = left.selectbox("Branch", names, key="manager_branch")
+    dates = right.date_input("Dates", key="manager_dates", min_value=first_day, max_value=last_day)
+    if len(dates) != 2:
+        st.warning("Pick an end date to see the results.")
+        return
+
+    row = branches[branches["branch"] == branch].iloc[0]
+    period = manager.choose_period(dates[0], dates[1], dt.date.fromisoformat(row["opened_on"]), first_day)
+    if period is None:
+        st.warning(f"{branch} opened on {row['opened_on']}, after these dates. Pick later dates.")
+        return
+    if period.start > dates[0]:
+        st.caption(f"{branch} opened on {row['opened_on']}, so the figures start on that day.")
+
+    params = {"branch_id": int(row["branch_id"]), "end_date": period.end.isoformat()}
+    daily = sql_file("manager/daily_sales.sql", start_date=period.earliest.isoformat(), **params)
+    products = sql_file("manager/top_products.sql", start_date=period.start.isoformat(), **params)
+    current_days, previous_days = manager.split_period(daily.frame, period)
+    current = manager.totals(current_days)
+    previous = None if previous_days is None else manager.totals(previous_days)
+
+    show_period_metrics(current, previous)
+    if previous is None:
+        st.caption("There is no full period of the same length before these dates, so changes are not shown.")
+    else:
+        st.caption(f"Changes compare with the {period.days} days before.")
+    show_finding(manager.finding(branch, period, current, previous, current_days, products.frame))
+
+    st.subheader("Revenue by day")
+    show_chart(charts.daily_revenue(current_days), "Daily revenue with a 7-day average line.")
+
+    st.subheader("Top products")
+    if products.frame.empty:
+        st.caption("No products were sold in these dates.")
+    else:
+        show_chart(charts.ranked_bars(products.frame, "product", "revenue_qar", "Revenue (QAR)",
+                                      tooltip=["product", "category", "units_sold", "revenue_qar",
+                                               "gross_margin_pct"]),
+                   "The top products at this branch by revenue.")
+
+    st.download_button("Download daily sales as CSV", manager.daily_csv(current_days),
+                       file_name=manager.csv_name(branch, period), mime="text/csv")
+    st.caption("The file has one row per day the branch was open in these dates. Its last column says the "
+               "data is simulated.")
+    show_sources(daily, products)
+
+
 PAGES = {
     "revenue": ("Revenue", revenue_page),
     "seasonal": ("Ramadan and weekends", seasonal_page),
     "branches": ("Branch ranking", branches_page),
     "customers": ("Customers", customers_page),
     "baskets": ("Basket pairs", baskets_page),
+    "manager": ("Branch manager", manager_page),
 }
