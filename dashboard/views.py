@@ -6,6 +6,7 @@ import datetime as dt
 
 import streamlit as st
 
+import forecast
 from dashboard import charts, findings, manager
 from dashboard.data import Loaded, ensure_database, load_query, load_sql
 
@@ -215,6 +216,41 @@ def manager_page() -> None:
     show_sources(daily, products)
 
 
+def forecast_page() -> None:
+    st.header("Sales forecast")
+    weekly, events = sql_file("forecast/branch_weekly_revenue.sql"), sql_file("forecast/calendar_events.sql")
+    result = forecast.backtest(weekly.frame, events.frame)
+    next_weeks = forecast.forecast_next(weekly.frame, events.frame, use_model=result.model_won)
+
+    show_finding(forecast.verdict(result))
+    first, second, third = st.columns(3)
+    first.metric("Baseline error (QAR a week)", f"{result.baseline_mae:,.0f}")
+    second.metric("Model error (QAR a week)", f"{result.model_mae:,.0f}")
+    third.metric("Model closer", f"{result.model_closer_weeks} of {result.total_weeks} weeks")
+    st.caption(f"Both forecasts were made from data up to {result.train_end} and scored on the "
+               f"{forecast.TEST_WEEKS} weeks from {result.test_start} to {result.test_end}. Error is the average "
+               f"gap between forecast and actual revenue for one branch in one week. The baseline is the average "
+               f"of the last {forecast.BASELINE_WEEKS} weeks before the test.")
+
+    st.subheader("Error by branch")
+    show_chart(charts.forecast_errors(result.branches), "Average weekly forecast error by branch and method.")
+
+    st.subheader("Held-back weeks")
+    names = list(result.branches["branch"])
+    branch = st.selectbox("Branch", names, index=names.index(forecast.worst_branch(result)), key="forecast_branch")
+    history = weekly.frame[weekly.frame["branch"] == branch].tail(forecast.TEST_WEEKS * 2)
+    held_back = result.weeks[result.weeks["branch"] == branch]
+    show_chart(charts.forecast_weeks(history, held_back), "Actual weekly revenue with both forecasts.")
+
+    st.subheader("Next four weeks")
+    show_finding(forecast.next_weeks_finding(next_weeks, result))
+    table = next_weeks.pivot(index="branch", columns="week_start", values="forecast_qar").reset_index()
+    st.dataframe(table, hide_index=True)
+    st.caption("Forecast revenue in QAR for the week starting on each date. The sample calendar stops at the end "
+               "of 2025, so the forecast only goes four weeks ahead.")
+    show_sources(weekly, events)
+
+
 PAGES = {
     "revenue": ("Revenue", revenue_page),
     "seasonal": ("Ramadan and weekends", seasonal_page),
@@ -222,4 +258,5 @@ PAGES = {
     "customers": ("Customers", customers_page),
     "baskets": ("Basket pairs", baskets_page),
     "manager": ("Branch manager", manager_page),
+    "forecast": ("Sales forecast", forecast_page),
 }

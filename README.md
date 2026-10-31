@@ -6,10 +6,12 @@ Qatari riyals, QAR) and 25 queries that answer the questions a store manager
 or a commercial team would actually ask: how are sales trending, which branch
 is doing best, who are the best customers, what sells together, and how much
 does Ramadan change things. A Streamlit dashboard shows the main results as
-charts, each with a short written finding computed from the data.
+charts, each with a short written finding computed from the data, and a weekly
+sales forecast is tested against a simple baseline on a held-back period.
 
 The database, the queries and `run.py` use only Python's standard library.
-The dashboard needs a few packages, listed in `requirements-dashboard.txt`.
+The dashboard and the forecast need a few packages, listed in
+`requirements-dashboard.txt`.
 
 ## The data
 
@@ -93,6 +95,7 @@ files `python run.py` prints, and a test fails if SQL appears in its Python code
 | Customers | RFM segments and monthly cohort retention | Q17, Q18 |
 | Basket pairs | Pairs bought together, ranked by lift | Q19 |
 | Branch manager | One branch and date range: sales, change on the period before, top products, CSV | `queries/manager/` |
+| Sales forecast | The forecast test, error by branch, and the next four weeks | `queries/forecast/` |
 
 Each section has a finding such as "Friday and Saturday, the weekend in Qatar,
 averaged QAR 677 a day against QAR 463 from Sunday to Thursday". The sentences
@@ -131,6 +134,50 @@ by `python tools/take_screenshots.py`. The script stops without saving if a page
 shows an error or has no simulated-data notice. The other pages are in
 `docs/screenshots/`.
 
+## Sales forecast
+
+**The model did not beat the baseline.** On the 13 weeks held back, it was off
+by QAR 300 a week per branch on average, against QAR 244 for the baseline, which
+makes it 22.8% worse. This describes simulated data, not a real business.
+
+```
+python forecast.py
+```
+
+| Branch | Average weekly revenue (QAR) | Baseline error (QAR) | Model error (QAR) | Closer |
+|---|---:|---:|---:|---|
+| Al Khor | 397 | 160 | 149 | Model |
+| Al Rayyan | 1,194 | 249 | 622 | Baseline |
+| Al Sadd | 1,387 | 374 | 349 | Model |
+| Al Wakrah | 484 | 164 | 191 | Baseline |
+| Lusail | 883 | 274 | 188 | Model |
+
+How the test works:
+
+- The target is revenue per branch per full Monday to Sunday week. Days are too noisy, because a branch takes one to three orders on a day it trades, and some days none. Part-weeks at the end of the data and at Lusail's opening are left out.
+- The last 13 full weeks, 2025-09-29 to 2025-12-28, are held back. Both methods see only the weeks before that and forecast the whole period in one go.
+- The baseline is the average of the last 4 weeks before the test, held flat. Same week last year is not used, because Ramadan moves and Lusail has no full year before the test.
+- The model is a straight-line fit on log revenue for each branch, with a trend and the share of each week in Ramadan, Eid, the summer holidays and the days after payday. All of those are known in advance.
+- The winner is whichever has the lower average error across all branch weeks. A test checks that changing the held-back revenue does not change either forecast.
+
+Why it lost: the model's advantage is knowing the calendar, and this test period
+has almost no events in it. What remains is its trend, which carried Al Rayyan's
+fast growth forward and over-forecast that branch by 52.1%. The model was closer
+at three of the five branches, but its Al Rayyan miss outweighed them.
+
+This was not bad luck on one dataset. The same design, unchanged, lost on 9 of
+10 other seeds, with a median error about 10% above the baseline. To repeat
+that, run
+`python seed.py --db other.db --seed 1`, then `python forecast.py --db other.db`.
+
+Because the baseline won, the baseline sets the next four weeks shown on the
+dashboard. The model was left as it was once the test had been run: changing it
+now and scoring it on the same weeks would no longer be a fair test. The design
+was chosen on a validation window inside the training data, where the model did
+win, but that window was the summer, when knowing the calendar helps most.
+
+![Sales forecast page](docs/screenshots/forecast.png)
+
 ## Project layout
 
 ```
@@ -139,6 +186,8 @@ seed.py                     builds retail.db
 run.py                      runs the queries and prints tables
 queries/                    one .sql file per business question
 queries/manager/            parameterised .sql files for the branch manager page
+queries/forecast/           .sql files that feed the forecast
+forecast.py                 the weekly forecast, its baseline and the held-back test
 app.py                      Streamlit entry point
 dashboard/                  data loading, written findings, charts and pages
 tools/take_screenshots.py   captures the README screenshots with headless Edge

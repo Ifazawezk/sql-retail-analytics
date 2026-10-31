@@ -83,6 +83,36 @@ def daily_revenue(daily: pd.DataFrame) -> alt.TopLevelMixin:
     return finish(bars + line, height=280)
 
 
+def forecast_errors(branches: pd.DataFrame) -> alt.TopLevelMixin:
+    data = branches.melt(id_vars="branch", value_vars=["baseline_mae", "model_mae"],
+                         var_name="method", value_name="error_qar")
+    data["method"] = data["method"].map({"baseline_mae": "Baseline", "model_mae": "Model"})
+    return grouped_bars(data, "branch", "method", "error_qar", "Average weekly error (QAR)",
+                        colors=[MUTED, BLUE])
+
+
+def forecast_weeks(history: pd.DataFrame, held_back: pd.DataFrame) -> alt.TopLevelMixin:
+    """Actual revenue, then the two forecasts over the held-back weeks."""
+    actual = history.rename(columns={"revenue_qar": "revenue"}).assign(series="Actual")
+    forecasts = held_back.melt(id_vars="week_start", value_vars=["baseline", "model"],
+                               var_name="series", value_name="revenue")
+    forecasts["series"] = forecasts["series"].map({"baseline": "Baseline", "model": "Model"})
+    data = pd.concat([actual[["week_start", "series", "revenue"]], forecasts], ignore_index=True)
+    data["week"] = pd.to_datetime(data["week_start"])
+    return finish(
+        alt.Chart(data)
+        .mark_line(strokeWidth=2)
+        .encode(
+            x=alt.X("week:T", title="Week starting", axis=alt.Axis(format="%d %b %y", grid=False, labelAngle=0)),
+            y=alt.Y("revenue:Q", title="Weekly revenue (QAR)", axis=alt.Axis(format=",.0f")),
+            color=alt.Color("series:N", sort=["Actual", "Baseline", "Model"],
+                            scale=alt.Scale(domain=["Actual", "Baseline", "Model"], range=[INK, SERIES[1], BLUE])),
+            tooltip=["week_start", "series", alt.Tooltip("revenue", format=",.2f", title="Revenue (QAR)")],
+        ),
+        height=300,
+    )
+
+
 def monthly_revenue(monthly: pd.DataFrame) -> alt.TopLevelMixin:
     data = monthly.assign(
         year=monthly["month"].str[:4],

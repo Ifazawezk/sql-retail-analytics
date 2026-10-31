@@ -71,7 +71,7 @@ def test_dashboard_data_matches_the_query_file(db_path, number):
 
 def test_python_code_holds_no_sql():
     pattern = re.compile(r"\bSELECT\b.+?\bFROM\b", re.DOTALL)
-    for path in [ROOT / "app.py", *sorted((ROOT / "dashboard").glob("*.py"))]:
+    for path in [ROOT / "app.py", ROOT / "forecast.py", *sorted((ROOT / "dashboard").glob("*.py"))]:
         assert not pattern.search(path.read_text(encoding="utf-8")), path.name
 
 
