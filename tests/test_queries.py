@@ -62,6 +62,20 @@ EXPECTED_COLUMNS = {
                                       "other_share_pct"],
     "25_delivery_trend.sql": ["quarter", "orders", "delivery_orders", "delivery_order_share_pct",
                               "delivery_revenue_share_pct", "share_change_pts"],
+    "26_promotion_uplift.sql": ["category", "products", "promo_weeks", "units_per_100_orders_normal",
+                                "units_per_100_orders_promo", "unit_uplift_pct",
+                                "profit_per_100_orders_normal_qar", "profit_per_100_orders_promo_qar",
+                                "profit_change_pct"],
+    "27_customer_lifetime_value.sql": ["joined_quarter", "customers", "value_3m_qar", "value_6m_qar",
+                                       "value_12m_qar", "value_to_date_qar", "active_last_90_days_pct"],
+    "28_stockout_proxies.sql": ["branch", "product", "last_sale", "next_sale", "gap_days", "orders_in_gap",
+                                "expected_sales", "revenue_at_risk_qar", "assessment"],
+    "29_delivery_growth.sql": ["branch", "orders_before", "orders_now", "order_growth_pct", "revenue_before_qar",
+                               "revenue_now_qar", "revenue_change_qar", "orders_effect_qar", "basket_effect_qar",
+                               "new_to_delivery_revenue_pct"],
+    "30_return_rates_by_channel.sql": ["category", "in_store_lines", "in_store_returned", "in_store_rate_pct",
+                                       "delivery_lines", "delivery_returned", "delivery_rate_pct", "rate_ratio",
+                                       "chi_square", "refunds_pct_of_gross_profit", "delivery_vs_store"],
 }
 
 DAYS_IN_DATA = 731  # 2024 is a leap year, so 366 + 365
