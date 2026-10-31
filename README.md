@@ -5,10 +5,11 @@ a SQLite database with two years of sales across five branches (prices in
 Qatari riyals, QAR) and 25 queries that answer the questions a store manager
 or a commercial team would actually ask: how are sales trending, which branch
 is doing best, who are the best customers, what sells together, and how much
-does Ramadan change things.
+does Ramadan change things. A Streamlit dashboard shows the main results as
+charts, each with a short written finding computed from the data.
 
-Everything runs on Python's standard library. There is nothing to install
-except pytest if you want to run the tests.
+The database, the queries and `run.py` use only Python's standard library.
+The dashboard needs a few packages, listed in `requirements-dashboard.txt`.
 
 ## The data
 
@@ -65,19 +66,63 @@ python -m pytest
 The tests build a fresh database in a temporary folder, run every query and
 check that the results make sense: the expected columns come back, revenue
 totals agree across queries, shares add up to 100, the running total ends at
-the yearly total, the weekend is the busiest part of the week, and so on.
+the yearly total, the weekend is the busiest part of the week, and so on. They
+also run every dashboard page through Streamlit's test runner and recompute the
+written findings from the query results.
 
 The query files are plain SQL, so you can also run them in any SQLite
 client, for example `sqlite3 retail.db < queries/05_weekday_pattern.sql`.
 
+## Dashboard
+
+```
+pip install -r requirements-dashboard.txt
+streamlit run app.py
+```
+
+If `retail.db` does not exist yet, the app builds it the first time it opens.
+
+The dashboard holds no SQL of its own. It runs the files in `queries/`, the same
+files `python run.py` prints, and a test fails if SQL appears in its Python code.
+
+| Page | What it shows | Query files |
+|---|---|---|
+| Revenue | Monthly revenue by year, share by category | Q01, Q04 |
+| Ramadan and weekends | Ramadan against the rest of the year, shopping hours, each day of the week | Q10, Q24, Q05 |
+| Branch ranking | Revenue per trading day and sales per square metre, by year | Q20, Q02 |
+| Customers | RFM segments and monthly cohort retention | Q17, Q18 |
+| Basket pairs | Pairs bought together, ranked by lift | Q19 |
+
+Each section has a finding such as "Friday and Saturday, the weekend in Qatar,
+averaged QAR 677 a day against QAR 463 from Sunday to Thursday". The sentences
+are built from the query results, so they change if the data changes. The data
+is generated, so every finding ends by saying it is simulated data, not a real
+business, and the sidebar says the same on every page. Every chart has a table
+of its numbers below it.
+
+![Revenue page](docs/screenshots/revenue.png)
+
+![Ramadan and weekends page](docs/screenshots/ramadan_weekends.png)
+
+![Customers page](docs/screenshots/customers.png)
+
+The screenshots are real captures of the running app, taken with headless Edge
+by `python tools/take_screenshots.py`. The script stops without saving if a page
+shows an error or has no simulated-data notice. The other pages are in
+`docs/screenshots/`.
+
 ## Project layout
 
 ```
-schema.sql          tables, keys, checks and indexes
-seed.py             builds retail.db
-run.py              runs the queries and prints tables
-queries/            one .sql file per business question
-tests/              pytest tests for the data, the queries and run.py
+schema.sql                  tables, keys, checks and indexes
+seed.py                     builds retail.db
+run.py                      runs the queries and prints tables
+queries/                    one .sql file per business question
+app.py                      Streamlit entry point
+dashboard/                  data loading, written findings, charts and pages
+tools/take_screenshots.py   captures the README screenshots with headless Edge
+docs/screenshots/           those screenshots
+tests/                      pytest tests for the data, the queries, run.py and the dashboard
 ```
 
 ## The 25 questions
@@ -177,7 +222,7 @@ produce. The point is that the SQL finds them and puts numbers on them.
 
 - Customer names are random combinations of common first and family names. They are not real people.
 - Ramadan and Eid dates follow the dates observed in Qatar in 2024 and 2025.
-- `retail.db` is not committed. Run `python seed.py` to build it.
+- `retail.db` is not committed. Run `python seed.py` to build it, or open the dashboard, which builds it if it is missing.
 
 ## License
 

@@ -30,6 +30,11 @@ class QueryResult:
     seconds: float
 
 
+def connect_read_only(db_path: Path) -> sqlite3.Connection:
+    """Open read-only so a typo in a query can never change the data."""
+    return sqlite3.connect(f"{Path(db_path).resolve().as_uri()}?mode=ro", uri=True)
+
+
 def query_files(numbers: list[int] | None = None) -> list[Path]:
     """Return query files in order, optionally only the given numbers."""
     files = sorted(QUERY_DIR.glob("[0-9][0-9]_*.sql"))
@@ -144,8 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         print(exc, file=sys.stderr)
         return 1
 
-    # Open read-only so a typo in a query can never change the data.
-    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+    conn = connect_read_only(db_path)
     try:
         total = 0.0
         for path in files:
