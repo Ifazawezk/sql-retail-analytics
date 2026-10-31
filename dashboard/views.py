@@ -251,6 +251,50 @@ def forecast_page() -> None:
     show_sources(weekly, events)
 
 
+def harder_questions_page() -> None:
+    st.header("Harder questions")
+    uplift, value, gaps, growth, rates = query(26), query(27), query(28), query(29), query(30)
+
+    st.subheader("Promotion uplift")
+    show_finding(findings.promotions(uplift.frame))
+    categories = uplift.frame[uplift.frame["category"] != "All steady sellers"]
+    show_chart(charts.ranked_bars(categories, "category", "unit_uplift_pct", "Extra units in a promotion week (%)",
+                                  ".1f"),
+               "Unit uplift in promotion weeks by category.")
+    st.caption("Promotions are read from sales, as the data has no promotions table. Single categories rest on few "
+               "products and weeks, so the total is the figure to trust.")
+    show_sources(uplift)
+
+    st.subheader("Customer lifetime value")
+    show_finding(findings.lifetime_value(value.frame))
+    show_chart(charts.lifetime_value(value.frame), "Gross profit per customer after 3, 6 and 12 months.")
+    st.caption("A cohort has a figure only when all its members have been around that long. Customers who stopped "
+               "shopping stay in the average.")
+    show_sources(value)
+
+    st.subheader("Stock-out proxies")
+    show_finding(findings.stockouts(gaps.frame))
+    st.dataframe(gaps.frame, hide_index=True, height="content",
+                 column_order=("branch", "product", "last_sale", "next_sale", "gap_days", "expected_sales",
+                               "assessment"))
+    st.caption("There is no stock data, so gaps in sales stand in for it. The line for a likely stock-out was set "
+               "by testing on data with no stock-outs in it. Only long gaps in best sellers can be found at these "
+               "volumes.")
+    show_sources(gaps)
+
+    st.subheader("Delivery growth")
+    show_finding(findings.delivery(growth.frame))
+    show_chart(charts.delivery_effects(growth.frame), "Change in delivery revenue by branch, split into two effects.")
+    st.caption("This compares the latest three calendar months with the same months a year earlier. Branch figures "
+               "rest on few orders.")
+    show_sources(growth)
+
+    st.subheader("Return rates by category and channel")
+    show_finding(findings.returns_by_channel(rates.frame))
+    show_chart(charts.return_rates(rates.frame), "Return rate by category for in-store and delivery lines.")
+    show_sources(rates)
+
+
 PAGES = {
     "revenue": ("Revenue", revenue_page),
     "seasonal": ("Ramadan and weekends", seasonal_page),
@@ -259,4 +303,5 @@ PAGES = {
     "baskets": ("Basket pairs", baskets_page),
     "manager": ("Branch manager", manager_page),
     "forecast": ("Sales forecast", forecast_page),
+    "harder": ("Harder questions", harder_questions_page),
 }

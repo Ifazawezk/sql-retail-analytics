@@ -2,7 +2,7 @@
 
 A SQL portfolio project built around a small grocery chain in Qatar. It has
 a SQLite database with two years of sales across five branches (prices in
-Qatari riyals, QAR) and 25 queries that answer the questions a store manager
+Qatari riyals, QAR) and 30 queries that answer the questions a store manager
 or a commercial team would actually ask: how are sales trending, which branch
 is doing best, who are the best customers, what sells together, and how much
 does Ramadan change things. A Streamlit dashboard shows the main results as
@@ -50,7 +50,7 @@ which need SQLite 3.28 or newer.
 
 ```
 python seed.py                 # builds retail.db, takes about a second
-python run.py                  # runs all 25 queries and prints the results
+python run.py                  # runs all 30 queries and prints the results
 python run.py 10 19            # runs only Q10 and Q19
 python run.py --max-rows 10    # shortens long results
 ```
@@ -69,8 +69,9 @@ The tests build a fresh database in a temporary folder, run every query and
 check that the results make sense: the expected columns come back, revenue
 totals agree across queries, shares add up to 100, the running total ends at
 the yearly total, the weekend is the busiest part of the week, and so on. They
-also run every dashboard page through Streamlit's test runner and recompute the
-written findings from the query results.
+also run every dashboard page through Streamlit's test runner, recompute the
+written findings from the query results, check that the forecast never sees the
+held-back weeks, and check the main numbers in this README against the queries.
 
 The query files are plain SQL, so you can also run them in any SQLite
 client, for example `sqlite3 retail.db < queries/05_weekday_pattern.sql`.
@@ -84,8 +85,9 @@ streamlit run app.py
 
 If `retail.db` does not exist yet, the app builds it the first time it opens.
 
-The dashboard holds no SQL of its own. It runs the files in `queries/`, the same
-files `python run.py` prints, and a test fails if SQL appears in its Python code.
+The dashboard holds no SQL of its own. It runs the files in `queries/`, and a
+test fails if SQL appears in its Python code. The numbered files are the same
+ones `python run.py` prints.
 
 | Page | What it shows | Query files |
 |---|---|---|
@@ -96,6 +98,7 @@ files `python run.py` prints, and a test fails if SQL appears in its Python code
 | Basket pairs | Pairs bought together, ranked by lift | Q19 |
 | Branch manager | One branch and date range: sales, change on the period before, top products, CSV | `queries/manager/` |
 | Sales forecast | The forecast test, error by branch, and the next four weeks | `queries/forecast/` |
+| Harder questions | Promotion uplift, lifetime value, stock-out proxies, delivery growth, returns by channel | Q26 to Q30 |
 
 Each section has a finding such as "Friday and Saturday, the weekend in Qatar,
 averaged QAR 677 a day against QAR 463 from Sunday to Thursday". The sentences
@@ -118,12 +121,14 @@ number of days before. The daily sales for those dates download as a CSV, and
 the last column of the file says the data is simulated.
 
 Filters need parameters, so this page runs the files in `queries/manager/`. They
-are ordinary .sql files that take `:branch_id`, `:start_date` and `:end_date`.
-Three rules keep the numbers fair:
+are ordinary .sql files that take `:branch_id`, `:start_date` and `:end_date`,
+and `python run.py` does not run them. Two rules keep the numbers fair:
 
 - A day with no orders counts as zero, but days before a branch opened do not count at all.
 - If the period before is cut short by the opening date or the start of the data, no change is shown. Comparing with half a period would give a large growth figure that means nothing.
-- A link can open the page on a branch and dates, for example `?view=manager&branch=Lusail&start=2025-02-01&end=2025-04-30`.
+
+A link can open the page on a branch and dates, for example
+`?view=manager&branch=Lusail&start=2025-02-01&end=2025-04-30`.
 
 ![Branch manager page](docs/screenshots/branch_manager.png)
 
@@ -167,8 +172,8 @@ at three of the five branches, but its Al Rayyan miss outweighed them.
 
 This was not bad luck on one dataset. The same design, unchanged, lost on 9 of
 10 other seeds, with a median error about 10% above the baseline. To repeat
-that, run
-`python seed.py --db other.db --seed 1`, then `python forecast.py --db other.db`.
+that, run `python seed.py --db other.db --seed 1`, then
+`python forecast.py --db other.db`, for seeds 1 to 10.
 
 Because the baseline won, the baseline sets the next four weeks shown on the
 dashboard. The model was left as it was once the test had been run: changing it
@@ -195,7 +200,7 @@ docs/screenshots/           those screenshots
 tests/                      pytest tests for the data, the queries, run.py and the dashboard
 ```
 
-## The 25 questions
+## The 30 questions
 
 | # | Question | SQL used |
 |---|---|---|
@@ -224,6 +229,25 @@ tests/                      pytest tests for the data, the queries, run.py and t
 | 23 | Discounted vs full-price lines | CASE grouping, window share |
 | 24 | Ramadan shopping hours vs normal hours | EXISTS, banding, window share |
 | 25 | Delivery share by quarter | Quarter buckets, LAG |
+| 26 | Promotion uplift in units and profit, with promotions inferred from sales | Recursive weeks, full product by week grid, pooled rates |
+| 27 | Customer value after 3, 6 and 12 months by join quarter | Fixed windows from join date, cohort maturity check |
+| 28 | Sales gaps that normal demand cannot explain | LEAD, correlated subqueries, two estimates compared |
+| 29 | Delivery growth split into more orders and basket size | Year-on-year periods from the data, exact decomposition |
+| 30 | Return rates by category and channel, with a significance test | Chi-square in SQL, total row with UNION ALL |
+
+## How the harder questions were checked
+
+The five newest queries each have a trap in them, and each was checked against
+something outside the query. All numbers here describe simulated data, not a
+real business.
+
+- **Q26, promotion uplift.** The database has no promotions table, so promotions are read from sales, and a promotion week with no sales leaves no trace. `seed.py` knows the real promotion calendar, so the estimate can be tested. Using only steady sellers, Q26 gives 60.7% against a true 58.7%. Reading discounts across all products would have given 85.2% against a true 64.6%. The result: units rise about 60% but gross profit per 100 orders falls 8.1%, so the extra volume does not cover the discount.
+- **Q27, lifetime value.** Lifetime spend flatters older customers, so everyone is measured over the same time since joining, and cohorts too young for a figure show a blank. Customers who stopped shopping stay in the average.
+- **Q28, stock-out proxies.** There is no stock data, and `seed.py` never takes a product off the shelf, so every gap in the sample data is chance. That makes it a good test of false alarms. A first version called all 15 of its top gaps likely stock-outs, so the line was reset from 11 seeds of about 3,000 gaps each, where the score never reached 12. The limit is real: a test removes two months of the best seller at the biggest branch and Q28 finds it, but a one-month gap scores 11.4 and is missed. At these volumes only long gaps in best sellers can be told from chance.
+- **Q29, delivery growth.** Comparing the latest three months with the same months a year earlier keeps the season equal. Orders went from 78 to 140, so branch figures rest on few orders. The two effects add up exactly to the change in revenue.
+- **Q30, returns by channel.** Delivered lines came back 1.56 times as often as in-store lines, close to the 1.5 built into `seed.py`. Eleven of the 13 categories have too few returns to judge alone, and the query says so instead of ranking them.
+
+![Harder questions page](docs/screenshots/harder_questions.png)
 
 ## Example output
 

@@ -20,7 +20,7 @@ from dashboard import data, findings
 from dashboard.views import PAGES
 
 ROOT = Path(__file__).resolve().parent.parent
-USED_QUERIES = [1, 2, 4, 5, 10, 17, 18, 19, 20, 24]
+USED_QUERIES = [1, 2, 4, 5, 10, 17, 18, 19, 20, 24, 26, 27, 28, 29, 30]
 
 
 @pytest.fixture
@@ -50,6 +50,11 @@ def all_findings(db_path):
         "rfm": findings.rfm(frame(17, db_path)),
         "cohorts": findings.cohorts(frame(18, db_path)),
         "baskets": findings.baskets(frame(19, db_path)),
+        "promotions": findings.promotions(frame(26, db_path)),
+        "lifetime_value": findings.lifetime_value(frame(27, db_path)),
+        "stockouts": findings.stockouts(frame(28, db_path)),
+        "delivery": findings.delivery(frame(29, db_path)),
+        "returns": findings.returns_by_channel(frame(30, db_path)),
     }
 
 
@@ -152,6 +157,43 @@ def test_cohort_finding_skips_blank_months_and_weights_by_size(db_path):
     assert len(known) < len(retention)
     expected = (known["month_12_pct"] * known["customers"]).sum() / known["customers"].sum()
     assert f"{expected:.1f}% twelve months after" in findings.cohorts(retention)
+
+
+def test_promotion_finding_follows_the_sign_of_the_profit_change():
+    row = {"category": "All steady sellers", "unit_uplift_pct": 50.0, "products": 10, "promo_weeks": 40}
+    loss = findings.promotions(pd.DataFrame([{**row, "profit_change_pct": -8.0}]))
+    gain = findings.promotions(pd.DataFrame([{**row, "profit_change_pct": 8.0}]))
+    assert "did not cover the discount" in loss
+    assert "more than covered the discount" in gain
+
+
+def test_lifetime_value_finding_uses_only_cohorts_with_twelve_months(db_path):
+    value = frame(27, db_path)
+    known = value[value["value_12m_qar"].notna()]
+    assert len(known) < len(value)
+    average = (known["value_12m_qar"] * known["customers"]).sum() / known["customers"].sum()
+    text = findings.lifetime_value(value)
+    assert f"QAR {average:,.0f} in gross profit" in text
+    assert f"across the {len(known)} cohorts" in text
+
+
+def test_stockout_finding_says_the_gaps_are_chance(db_path):
+    text = findings.stockouts(frame(28, db_path))
+    assert "0 of the 15 strongest gaps cross the line" in text
+    assert "never takes a product off the shelf" in text
+
+
+def test_delivery_finding_reads_the_total_row(db_path):
+    growth = frame(29, db_path)
+    total = growth[growth["branch"] == "All branches"].iloc[0]
+    assert f"orders from {total['orders_before']} to {total['orders_now']}" in findings.delivery(growth)
+
+
+def test_return_finding_counts_the_categories_it_cannot_judge(db_path):
+    rates = frame(30, db_path)
+    rows = rates[rates["category"] != "All categories"]
+    unclear = (rows["delivery_vs_store"] == "Too few returns to say").sum()
+    assert f"{unclear} of {len(rows)} categories" in findings.returns_by_channel(rates)
 
 
 def test_basket_finding_names_the_strongest_pair(db_path):

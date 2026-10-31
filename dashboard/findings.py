@@ -138,6 +138,68 @@ def cohorts(retention: pd.DataFrame) -> str:
     )
 
 
+def promotions(uplift: pd.DataFrame) -> str:
+    """From Q26. The total row is the reliable one, as single categories are thin."""
+    total = uplift[uplift["category"] == "All steady sellers"].iloc[0]
+    change = total["profit_change_pct"]
+    answer = "more than covered the discount" if change > 0 else "did not cover the discount"
+    return finish(
+        f"In a promotion week, steady sellers sold {more_or_less(total['unit_uplift_pct'])} units per 100 orders, "
+        f"while gross profit per 100 orders was {up_or_down(change)}. The extra volume {answer}. "
+        f"This covers {total['products']} products and {total['promo_weeks']} promotion weeks."
+    )
+
+
+def lifetime_value(value: pd.DataFrame) -> str:
+    """From Q27. Only cohorts old enough for a 12-month figure are compared."""
+    known = value[value["value_12m_qar"].notna()]
+    best = known.loc[known["value_12m_qar"].idxmax()]
+    worst = known.loc[known["value_12m_qar"].idxmin()]
+    average = weighted_mean(known["value_12m_qar"], known["customers"])
+    return finish(
+        f"A customer was worth {qar(average)} in gross profit after refunds over their first 12 months, "
+        f"across the {len(known)} cohorts old enough to measure. The {best['joined_quarter']} joiners were worth "
+        f"the most at {qar(best['value_12m_qar'])} and the {worst['joined_quarter']} joiners the least at "
+        f"{qar(worst['value_12m_qar'])}."
+    )
+
+
+def stockouts(gaps: pd.DataFrame) -> str:
+    """From Q28. The generator has no stock-outs, so a flag here is a false alarm."""
+    top = gaps.iloc[0]
+    flagged = int((gaps["assessment"] == "Likely stock-out").sum())
+    return finish(
+        f"The most surprising gap was {top['product']} at {top['branch']}, with no sale in {top['gap_days']} days "
+        f"against {top['expected_sales']:.1f} expected. {flagged} of the {len(gaps)} strongest gaps cross the line "
+        f"for a likely stock-out. The generator never takes a product off the shelf, so these gaps are chance."
+    )
+
+
+def delivery(growth: pd.DataFrame) -> str:
+    """From Q29. Branch counts are small, so this reads the total row."""
+    total = growth[growth["branch"] == "All branches"].iloc[0]
+    return finish(
+        f"Delivery revenue went from {qar(total['revenue_before_qar'])} to {qar(total['revenue_now_qar'])} "
+        f"and orders from {total['orders_before']} to {total['orders_now']}. More orders account for "
+        f"{qar(total['orders_effect_qar'])} of the change and basket size for {qar(total['basket_effect_qar'])}. "
+        f"Customers new to delivery brought {total['new_to_delivery_revenue_pct']:.1f}% of the latest revenue."
+    )
+
+
+def returns_by_channel(rates: pd.DataFrame) -> str:
+    """From Q30. Most categories have too few returns to judge on their own."""
+    total = rates[rates["category"] == "All categories"].iloc[0]
+    categories = rates[rates["category"] != "All categories"]
+    unclear = int((categories["delivery_vs_store"] == "Too few returns to say").sum())
+    costliest = categories.loc[categories["refunds_pct_of_gross_profit"].idxmax()]
+    return finish(
+        f"Delivered lines came back at {total['delivery_rate_pct']:.2f}% against {total['in_store_rate_pct']:.2f}% "
+        f"in store, {total['rate_ratio']:.2f} times as often. {unclear} of {len(categories)} categories have too "
+        f"few returns to judge alone. Refunds cost the most in {costliest['category']}, at "
+        f"{costliest['refunds_pct_of_gross_profit']:.1f}% of its gross profit."
+    )
+
+
 def baskets(pairs: pd.DataFrame) -> str:
     """From Q19, which returns the strongest pairs by lift."""
     top = pairs.sort_values("lift", ascending=False).iloc[0]

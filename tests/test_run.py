@@ -6,7 +6,7 @@ def test_all_queries_print(db_path, capsys):
     out = capsys.readouterr().out
     for number in range(1, len(run.query_files()) + 1):
         assert f"Q{number:02d}." in out
-    assert "Ran 25 queries" in out
+    assert "Ran 30 queries" in out
 
 
 def test_selected_queries_only(db_path, capsys):

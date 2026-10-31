@@ -47,7 +47,8 @@ def ranked_bars(frame: pd.DataFrame, label: str, value: str, title: str, number_
 
 def grouped_bars(frame: pd.DataFrame, group: str, series: str, value: str, title: str, *,
                  group_order: list | None = None, colors: list[str] | None = None,
-                 number_format: str = ",.0f", label_expression: str = "datum.label") -> alt.TopLevelMixin:
+                 number_format: str = ",.0f", label_expression: str = "datum.label",
+                 label_angle: int = 0) -> alt.TopLevelMixin:
     """Two or more bars side by side for each group. `frame` is in long form."""
     order = list(dict.fromkeys(frame[series]))
     return finish(
@@ -55,7 +56,8 @@ def grouped_bars(frame: pd.DataFrame, group: str, series: str, value: str, title
         .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
         .encode(
             x=alt.X(f"{group}:N", sort=group_order, title=None, scale=alt.Scale(paddingInner=0.4),
-                    axis=alt.Axis(labelAngle=0, labelLimit=240, ticks=False, labelExpr=label_expression)),
+                    axis=alt.Axis(labelAngle=label_angle, labelLimit=240, ticks=False,
+                                  labelExpr=label_expression)),
             xOffset=alt.XOffset(f"{series}:N", sort=order, scale=alt.Scale(paddingInner=0.08)),
             y=alt.Y(f"{value}:Q", title=title, axis=alt.Axis(format=number_format)),
             color=alt.Color(f"{series}:N", sort=order,
@@ -81,6 +83,35 @@ def daily_revenue(daily: pd.DataFrame) -> alt.TopLevelMixin:
         tooltip=["date", alt.Tooltip("average", format=",.2f", title="7-day average (QAR)")],
     )
     return finish(bars + line, height=280)
+
+
+def lifetime_value(value: pd.DataFrame) -> alt.TopLevelMixin:
+    """Blank cells are cohorts too young for that figure, so they have no bar."""
+    labels = {"value_3m_qar": "3 months", "value_6m_qar": "6 months", "value_12m_qar": "12 months"}
+    data = value.melt(id_vars="joined_quarter", value_vars=list(labels), var_name="after",
+                      value_name="value_qar").dropna(subset=["value_qar"])
+    data["after"] = data["after"].map(labels)
+    return grouped_bars(data, "joined_quarter", "after", "value_qar", "Gross profit per customer (QAR)",
+                        colors=[SERIES[0], SERIES[1], SERIES[2]])
+
+
+def delivery_effects(growth: pd.DataFrame) -> alt.TopLevelMixin:
+    labels = {"orders_effect_qar": "More orders", "basket_effect_qar": "Basket size"}
+    rows = growth[growth["branch"] != "All branches"]
+    data = rows.melt(id_vars="branch", value_vars=list(labels), var_name="effect", value_name="change_qar")
+    data["effect"] = data["effect"].map(labels)
+    return grouped_bars(data, "branch", "effect", "change_qar", "Change in delivery revenue (QAR)",
+                        colors=[BLUE, MUTED])
+
+
+def return_rates(rates: pd.DataFrame) -> alt.TopLevelMixin:
+    labels = {"in_store_rate_pct": "In store", "delivery_rate_pct": "Delivery"}
+    rows = rates[rates["category"] != "All categories"]
+    data = rows.melt(id_vars="category", value_vars=list(labels), var_name="channel", value_name="rate_pct")
+    data["channel"] = data["channel"].map(labels)
+    return grouped_bars(data, "category", "channel", "rate_pct", "Lines returned (%)",
+                        group_order=list(rows["category"]), colors=[MUTED, BLUE], number_format=".1f",
+                        label_angle=-30)
 
 
 def forecast_errors(branches: pd.DataFrame) -> alt.TopLevelMixin:
