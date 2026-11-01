@@ -217,6 +217,38 @@ def test_main_product_is_the_biggest_move_the_same_way_as_its_category(db_path):
         assert row.main_product_change_qar * row.change_qar > 0
 
 
+def season_days(db_path, previous_start, start, end):
+    return data.load_sql("manager/season_days.sql",
+                         {"previous_start": previous_start, "start_date": start, "end_date": end}, db_path).frame
+
+
+def test_season_days_count_each_period_separately(db_path):
+    """Ramadan 2025 is 1 to 29 March and Eid al-Fitr 30 March to 1 April."""
+    frame = season_days(db_path, "2025-03-04", "2025-04-02", "2025-04-30").set_index("kind")
+    assert frame.loc["ramadan", "days_before"] == 26
+    assert frame.loc["ramadan", "days_now"] == 0
+    assert frame.loc["eid", "days_before"] == 3
+    assert frame.loc["eid", "days_now"] == 0
+
+
+def test_season_days_include_both_ends_of_both_periods(db_path):
+    frame = season_days(db_path, "2025-02-28", "2025-03-29", "2025-03-30").set_index("kind")
+    assert frame.loc["ramadan", "days_before"] == 28
+    assert frame.loc["ramadan", "days_now"] == 1
+    assert frame.loc["eid", "days_now"] == 1
+
+
+def test_season_days_leave_out_national_day(db_path):
+    assert season_days(db_path, "2025-12-01", "2025-12-15", "2025-12-29").empty
+
+
+def test_season_days_add_the_two_eids_together(db_path):
+    """Eid al-Fitr and Eid al-Adha each last three days, one in each period here."""
+    frame = season_days(db_path, "2025-03-30", "2025-05-05", "2025-06-09").set_index("kind")
+    assert frame.loc["eid", "days_before"] == 3
+    assert frame.loc["eid", "days_now"] == 3
+
+
 # ---------------------------------------------------------------------------
 # Period logic
 # ---------------------------------------------------------------------------
@@ -393,6 +425,58 @@ def test_change_finding_when_orders_rise_and_baskets_shrink():
     assert "Household moved furthest, up QAR 200" in text
 
 
+def test_season_note_names_each_uneven_season():
+    period = manager.Period(dt.date(2025, 4, 2), dt.date(2025, 4, 30), dt.date(2025, 3, 4))
+    seasons = pd.DataFrame({"kind": ["ramadan", "eid"], "days_before": [26, 3], "days_now": [0, 0]})
+    note = manager.season_note(seasons, period)
+    assert note.startswith("These dates are not a like-for-like match for the 29 days before.")
+    assert "Ramadan: 26 of the days before, 0 of these days." in note
+    assert "Eid: 3 of the days before, 0 of these days." in note
+    assert "Part of this change is the calendar, not the branch." in note
+    assert note.endswith(findings.SIMULATED_NOTE)
+
+
+def test_season_note_stays_quiet_when_the_periods_match():
+    period = manager.Period(dt.date(2025, 8, 1), dt.date(2025, 8, 31), dt.date(2025, 7, 1))
+    assert manager.season_note(pd.DataFrame({"kind": ["season"], "days_before": [31], "days_now": [31]}),
+                               period) is None
+    assert manager.season_note(pd.DataFrame({"kind": [], "days_before": [], "days_now": []}), period) is None
+
+
+def test_season_note_ignores_a_small_overlap():
+    """The 31 days before October 2025 hold one summer day, which is not a mismatch."""
+    period = manager.Period(dt.date(2025, 10, 1), dt.date(2025, 10, 31), dt.date(2025, 8, 31))
+    seasons = pd.DataFrame({"kind": ["season"], "days_before": [1], "days_now": [0]})
+    assert manager.season_note(seasons, period) is None
+
+
+def test_season_note_starts_at_a_tenth_of_the_days():
+    period = manager.Period(dt.date(2025, 4, 1), dt.date(2025, 4, 30), dt.date(2025, 3, 2))
+    frame = pd.DataFrame({"kind": ["eid"], "days_before": [3], "days_now": [0]})
+    assert manager.season_note(frame, period) is not None
+    assert manager.season_note(frame.assign(days_before=2), period) is None
+
+
+def test_season_note_leaves_out_a_season_that_matches():
+    period = manager.Period(dt.date(2025, 5, 5), dt.date(2025, 6, 9), dt.date(2025, 3, 30))
+    seasons = pd.DataFrame({"kind": ["ramadan", "eid"], "days_before": [0, 3], "days_now": [5, 3]})
+    note = manager.season_note(seasons, period)
+    assert "Ramadan" in note
+    assert "Eid" not in note
+
+
+def test_readme_example_states_the_real_numbers(db_path):
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+    current = manager.totals(daily(db_path, LUSAIL, "2025-04-02", "2025-04-30"))
+    previous = manager.totals(daily(db_path, LUSAIL, "2025-03-04", "2025-04-01"))
+    top = category_changes(db_path, LUSAIL, "2025-03-04", "2025-04-02", "2025-04-30").iloc[0]
+    seasons = season_days(db_path, "2025-03-04", "2025-04-02", "2025-04-30").set_index("kind")
+    assert f"took {100 * (1 - current.revenue / previous.revenue):.1f}% less than the 29 days before" in readme
+    assert f"but {seasons.loc['ramadan', 'days_before']} of those days were Ramadan" in readme
+    assert f"and {seasons.loc['eid', 'days_before']} were Eid" in readme
+    assert f"{top['category']} fell the most, down QAR {-top['change_qar']:,.0f}, mainly {top['main_product']}" in readme
+
+
 def test_csv_round_trip_matches_the_filtered_days(db_path):
     frame = daily(db_path, AL_SADD, "2025-05-01", "2025-05-31")
     parsed = pd.read_csv(io.BytesIO(manager.daily_csv(frame)))
@@ -482,6 +566,36 @@ def test_what_changed_appears_when_there_is_a_comparison(app_db):
     assert app.info[1].value.startswith("Revenue fell")
     assert "Dates & Nuts moved furthest, down" in app.info[1].value
     assert app.info[1].value.endswith(findings.SIMULATED_NOTE)
+
+
+def page_warnings(app):
+    """The warnings on the page itself. The sidebar always has one of its own."""
+    return [item.value for item in app.main.warning]
+
+
+def test_season_warning_shows_after_ramadan(app_db):
+    app = open_manager(branch="Lusail", start="2025-04-02", end="2025-04-30")
+    assert not app.exception
+    assert any("Ramadan: 26 of the days before, 0 of these days." in text for text in page_warnings(app))
+
+
+def test_default_view_warns_about_the_summer_holidays(app_db):
+    """The opening 90 days are compared with a period from 5 July, so most of the summer."""
+    app = open_manager()
+    assert not app.exception
+    assert any("Summer holidays: 58 of the days before, 0 of these days." in text for text in page_warnings(app))
+
+
+def test_no_season_warning_when_the_periods_match(app_db):
+    app = open_manager(branch="Al Sadd", start="2025-08-01", end="2025-08-31")
+    assert not app.exception
+    assert page_warnings(app) == []
+
+
+def test_no_season_warning_for_a_single_overlapping_day(app_db):
+    app = open_manager(branch="Al Sadd", start="2025-10-01", end="2025-10-31")
+    assert not app.exception
+    assert page_warnings(app) == []
 
 
 def test_what_changed_follows_the_filters(app_db):

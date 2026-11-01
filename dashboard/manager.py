@@ -12,6 +12,8 @@ from dashboard.findings import SIMULATED_NOTE, finish, more_or_less, qar
 
 DEFAULT_DAYS = 90
 CSV_NOTE_COLUMN = "data_note"
+SEASON_NAMES = {"ramadan": "Ramadan", "eid": "Eid", "season": "Summer holidays"}
+UNEVEN_SHARE = 0.1  # of the days in the period
 
 
 @dataclass(frozen=True)
@@ -212,6 +214,20 @@ def change_finding(split: ChangeSplit, period: Period, changes: pd.DataFrame) ->
         text += (f" {top['category']} moved furthest, {direction} {qar(abs(top['change_qar']))}, "
                  f"mainly {top['main_product']} at {qar(abs(top['main_product_change_qar']))}.")
     return finish(text)
+
+
+def season_note(seasons: pd.DataFrame, period: Period) -> str | None:
+    """A warning when the two periods hold very different amounts of a season. Ramadan
+    in only one of them can move revenue more than anything a branch did. A difference
+    of a day or two in a month changes little, and a warning there would soon be ignored."""
+    gap = (seasons["days_before"] - seasons["days_now"]).abs()
+    uneven = seasons[(gap > 0) & (gap >= UNEVEN_SHARE * period.days)]
+    if uneven.empty:
+        return None
+    counts = ". ".join(f"{SEASON_NAMES[row.kind]}: {row.days_before} of the days before, {row.days_now} of these days"
+                       for row in uneven.itertuples())
+    return finish(f"These dates are not a like-for-like match for the {period.days} days before. {counts}. "
+                  "Part of this change is the calendar, not the branch.")
 
 
 def daily_csv(daily: pd.DataFrame) -> bytes:
