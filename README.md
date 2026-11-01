@@ -96,7 +96,7 @@ ones `python run.py` prints.
 | Branch ranking | Revenue per trading day and sales per square metre, by year | Q20, Q02 |
 | Customers | RFM segments and monthly cohort retention | Q17, Q18 |
 | Basket pairs | Pairs bought together, ranked by lift | Q19 |
-| Branch manager | One branch and date range: sales, change on the period before, top products, CSV | `queries/manager/` |
+| Branch manager | One branch and date range: sales, change on the period before and what caused it, top products, CSV | `queries/manager/` |
 | Sales forecast | The forecast test, error by branch, and the next four weeks | `queries/forecast/` |
 | Harder questions | Promotion uplift, lifetime value, stock-out proxies, delivery growth, returns by channel | Q26 to Q30 |
 
@@ -119,6 +119,22 @@ Pick a branch and a date range to see that branch's revenue, orders, average
 order, gross margin, delivery share and return rate, each compared with the same
 number of days before. The daily sales for those dates download as a CSV, and
 the last column of the file says the data is simulated.
+
+When there is a period to compare with, a "What changed" section says why revenue
+moved. It splits the change into orders gained or lost and basket size, in the same
+way as Q29, and ranks the categories by how far each one moved, with the product
+that moved each one most. The two effects add up to the change in revenue, and so
+do the categories. For a falling category, the product named is the one that fell
+furthest, even if another product in it rose by more.
+
+The same section warns when the two periods are not a fair match. If Ramadan, Eid
+or the summer holidays differ between them by a tenth of the days or more, it gives
+the days in each and says part of the change is the calendar, not the branch. A
+smaller gap gets no warning, and the two Eids count as one kind, so three days of
+each is a match. For example, Lusail from 2025-04-02 to 2025-04-30 took 47.5% less
+than the 29 days before, but 26 of those days were Ramadan and 3 were Eid. Dates &
+Nuts fell the most, down QAR 672, mainly Medjool Dates 1kg. The page opens on a
+warning too, because the 90 days before its default dates hold most of the summer.
 
 Filters need parameters, so this page runs the files in `queries/manager/`. They
 are ordinary .sql files that take `:branch_id`, `:start_date` and `:end_date`,
@@ -190,7 +206,7 @@ schema.sql                  tables, keys, checks and indexes
 seed.py                     builds retail.db
 run.py                      runs the queries and prints tables
 queries/                    one .sql file per business question
-queries/manager/            parameterised .sql files for the branch manager page
+queries/manager/            parameterised .sql files for the branch manager page, including what changed
 queries/forecast/           .sql files that feed the forecast
 forecast.py                 the weekly forecast, its baseline and the held-back test
 app.py                      Streamlit entry point

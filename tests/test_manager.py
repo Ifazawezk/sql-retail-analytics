@@ -30,6 +30,12 @@ def top_products(db_path, branch_id, start, end):
                          {"branch_id": branch_id, "start_date": start, "end_date": end}, db_path).frame
 
 
+def category_changes(db_path, branch_id, previous_start, start, end):
+    return data.load_sql("manager/change_by_category.sql",
+                         {"branch_id": branch_id, "previous_start": previous_start, "start_date": start,
+                          "end_date": end}, db_path).frame
+
+
 def scalar(db_path, sql, *params):
     conn = sqlite3.connect(db_path)
     try:
@@ -123,6 +129,124 @@ def test_top_products_respect_branch_and_dates(db_path):
     """, (frame.loc[0, "product"],)).fetchone()[0]
     conn.close()
     assert frame.loc[0, "revenue_qar"] == expected
+
+
+def test_category_changes_match_the_daily_sales_of_both_periods(db_path):
+    """The two files reach the numbers separately, so they check each other."""
+    for branch_id in (AL_SADD, LUSAIL):
+        frame = category_changes(db_path, branch_id, "2025-03-04", "2025-04-02", "2025-04-30")
+        before = daily(db_path, branch_id, "2025-03-04", "2025-04-01")["revenue_qar"].sum()
+        now = daily(db_path, branch_id, "2025-04-02", "2025-04-30")["revenue_qar"].sum()
+        tolerance = 0.01 * len(frame) + 0.01 * 29
+        assert frame["revenue_before_qar"].sum() == pytest.approx(before, abs=tolerance)
+        assert frame["revenue_now_qar"].sum() == pytest.approx(now, abs=tolerance)
+        assert frame["change_qar"].sum() == pytest.approx(now - before, abs=2 * tolerance)
+
+
+def test_category_changes_are_ranked_by_the_size_of_the_move(db_path):
+    frame = category_changes(db_path, AL_SADD, "2025-03-04", "2025-04-02", "2025-04-30")
+    sizes = list(frame["change_qar"].abs())
+    assert sizes == sorted(sizes, reverse=True)
+
+
+def test_orders_on_the_edges_of_the_periods_land_on_the_right_side(tmp_path, db_path):
+    """The last evening counts, and the first day of the current period is not 'before'."""
+    copy = tmp_path / "edges.db"
+    source = sqlite3.connect(db_path)
+    target = sqlite3.connect(copy)
+    source.backup(target)
+    source.close()
+    before = category_changes(copy, AL_SADD, "2025-05-01", "2025-05-11", "2025-05-20").set_index("category")
+    product_id, category, price, cost = target.execute("""
+        SELECT p.product_id, c.name, p.unit_price, p.unit_cost FROM products p JOIN categories c USING (category_id)
+        LIMIT 1""").fetchone()
+    for moment in ("2025-05-20 23:30", "2025-05-11 00:05"):
+        order = target.execute("""INSERT INTO orders (customer_id, branch_id, ordered_at, channel, payment_method)
+                                  VALUES (1, 1, ?, 'in_store', 'card')""", (moment,)).lastrowid
+        target.execute("""INSERT INTO order_items (order_id, product_id, quantity, unit_price, unit_cost, line_total)
+                          VALUES (?, ?, 1, ?, ?, ?)""", (order, product_id, price, cost, price))
+    target.commit()
+    target.close()
+    after = category_changes(copy, AL_SADD, "2025-05-01", "2025-05-11", "2025-05-20").set_index("category")
+    assert after.loc[category, "revenue_now_qar"] == pytest.approx(
+        before.loc[category, "revenue_now_qar"] + 2 * price, abs=0.01)
+    assert after.loc[category, "revenue_before_qar"] == before.loc[category, "revenue_before_qar"]
+
+
+def test_category_sold_in_only_one_period_keeps_its_row(tmp_path, db_path):
+    copy = tmp_path / "one_period.db"
+    source = sqlite3.connect(db_path)
+    target = sqlite3.connect(copy)
+    source.backup(target)
+    source.close()
+    frame = category_changes(db_path, AL_SADD, "2025-05-01", "2025-05-16", "2025-05-30")
+    category = frame.iloc[0]["category"]
+    target.execute("""
+        DELETE FROM returns WHERE order_item_id IN (
+            SELECT oi.order_item_id FROM order_items oi JOIN orders o USING (order_id)
+            JOIN products p USING (product_id) JOIN categories c USING (category_id)
+            WHERE c.name = ? AND o.branch_id = 1 AND o.ordered_at >= '2025-05-16')""", (category,))
+    target.execute("""
+        DELETE FROM order_items WHERE order_item_id IN (
+            SELECT oi.order_item_id FROM order_items oi JOIN orders o USING (order_id)
+            JOIN products p USING (product_id) JOIN categories c USING (category_id)
+            WHERE c.name = ? AND o.branch_id = 1 AND o.ordered_at >= '2025-05-16')""", (category,))
+    target.commit()
+    target.close()
+    row = category_changes(copy, AL_SADD, "2025-05-01", "2025-05-16", "2025-05-30").set_index("category").loc[category]
+    assert row["revenue_now_qar"] == 0
+    assert row["change_qar"] == -row["revenue_before_qar"]
+
+
+def test_main_product_is_the_biggest_move_the_same_way_as_its_category(db_path):
+    """Worked out here from the raw rows, so the window function has to agree."""
+    frame = category_changes(db_path, AL_SADD, "2025-03-04", "2025-04-02", "2025-04-30")
+    conn = sqlite3.connect(db_path)
+    rows = pd.read_sql_query("""
+        SELECT c.name AS category, p.name AS product,
+               SUM(CASE WHEN o.ordered_at >= '2025-04-02' THEN oi.line_total ELSE -oi.line_total END) AS change
+        FROM orders o JOIN order_items oi USING (order_id) JOIN products p USING (product_id)
+        JOIN categories c USING (category_id)
+        WHERE o.branch_id = 1 AND o.ordered_at >= '2025-03-04' AND o.ordered_at < '2025-05-01'
+        GROUP BY c.name, p.name""", conn)
+    conn.close()
+    for row in frame.itertuples():
+        products = rows[rows["category"] == row.category]
+        expected = products["change"].max() if row.change_qar >= 0 else products["change"].min()
+        assert row.main_product_change_qar == pytest.approx(expected, abs=0.01)
+        assert row.main_product_change_qar * row.change_qar > 0
+
+
+def season_days(db_path, previous_start, start, end):
+    return data.load_sql("manager/season_days.sql",
+                         {"previous_start": previous_start, "start_date": start, "end_date": end}, db_path).frame
+
+
+def test_season_days_count_each_period_separately(db_path):
+    """Ramadan 2025 is 1 to 29 March and Eid al-Fitr 30 March to 1 April."""
+    frame = season_days(db_path, "2025-03-04", "2025-04-02", "2025-04-30").set_index("kind")
+    assert frame.loc["ramadan", "days_before"] == 26
+    assert frame.loc["ramadan", "days_now"] == 0
+    assert frame.loc["eid", "days_before"] == 3
+    assert frame.loc["eid", "days_now"] == 0
+
+
+def test_season_days_include_both_ends_of_both_periods(db_path):
+    frame = season_days(db_path, "2025-02-28", "2025-03-29", "2025-03-30").set_index("kind")
+    assert frame.loc["ramadan", "days_before"] == 28
+    assert frame.loc["ramadan", "days_now"] == 1
+    assert frame.loc["eid", "days_now"] == 1
+
+
+def test_season_days_leave_out_national_day(db_path):
+    assert season_days(db_path, "2025-12-01", "2025-12-15", "2025-12-29").empty
+
+
+def test_season_days_add_the_two_eids_together(db_path):
+    """Eid al-Fitr and Eid al-Adha each last three days, one in each period here."""
+    frame = season_days(db_path, "2025-03-30", "2025-05-05", "2025-06-09").set_index("kind")
+    assert frame.loc["eid", "days_before"] == 3
+    assert frame.loc["eid", "days_now"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +363,120 @@ def test_finding_for_a_period_with_no_orders_is_still_labelled():
     assert text.endswith(findings.SIMULATED_NOTE)
 
 
+def totals_of(orders, revenue):
+    return manager.Totals(30, orders, 0, 0, revenue, 0.0, 0)
+
+
+def test_split_change_matches_a_worked_example():
+    """10 orders at QAR 90, then 12 at QAR 100: 2 more orders at 90, and 10 extra on each of the 12."""
+    split = manager.split_change(totals_of(12, 1200.0), totals_of(10, 900.0))
+    assert split == manager.ChangeSplit(300.0, 180.0, 120.0)
+
+
+def test_split_change_when_effects_pull_opposite_ways():
+    split = manager.split_change(totals_of(20, 1000.0), totals_of(10, 800.0))
+    assert split.total == 200.0
+    assert split.orders_effect == 800.0
+    assert split.basket_effect == -600.0
+
+
+def test_split_change_when_nothing_sold_in_the_current_period():
+    split = manager.split_change(totals_of(0, 0.0), totals_of(10, 900.0))
+    assert split == manager.ChangeSplit(-900.0, -900.0, 0.0)
+
+
+def test_split_change_needs_earlier_orders():
+    assert manager.split_change(totals_of(5, 100.0), totals_of(0, 0.0)) is None
+
+
+def test_split_adds_up_on_real_numbers(db_path):
+    current = manager.totals(daily(db_path, LUSAIL, "2025-04-02", "2025-04-30"))
+    previous = manager.totals(daily(db_path, LUSAIL, "2025-03-04", "2025-04-01"))
+    split = manager.split_change(current, previous)
+    assert split.orders_effect + split.basket_effect == pytest.approx(current.revenue - previous.revenue)
+    assert split.orders_effect == pytest.approx(
+        (current.orders - previous.orders) * previous.average_order_value)
+    assert split.basket_effect == pytest.approx(
+        current.orders * (current.average_order_value - previous.average_order_value))
+
+
+def test_change_finding_names_the_biggest_move_the_same_way_as_the_total():
+    period = manager.Period(dt.date(2025, 4, 1), dt.date(2025, 4, 30), dt.date(2025, 3, 2))
+    changes = pd.DataFrame({
+        "category": ["Household", "Frozen"], "change_qar": [500.0, -300.0],
+        "main_product": ["Soap", "Fries"], "main_product_change_qar": [200.0, -250.0],
+    })
+    falling = manager.ChangeSplit(-100.0, -40.0, -60.0)
+    text = manager.change_finding(falling, period, changes)
+    assert text.startswith("Revenue fell QAR 100 compared with the 30 days before.")
+    assert "Fewer orders took away QAR 40 and smaller baskets took away QAR 60." in text
+    assert "Frozen moved furthest, down QAR 300, mainly Fries at QAR 250." in text
+    assert "Household" not in text
+    assert text.endswith(findings.SIMULATED_NOTE)
+
+
+def test_change_finding_when_orders_rise_and_baskets_shrink():
+    period = manager.Period(dt.date(2025, 4, 1), dt.date(2025, 4, 30), dt.date(2025, 3, 2))
+    changes = pd.DataFrame({"category": ["Household"], "change_qar": [200.0], "main_product": ["Soap"],
+                            "main_product_change_qar": [150.0]})
+    text = manager.change_finding(manager.ChangeSplit(200.0, 800.0, -600.0), period, changes)
+    assert "Revenue rose QAR 200" in text
+    assert "More orders added QAR 800 and smaller baskets took away QAR 600." in text
+    assert "Household moved furthest, up QAR 200" in text
+
+
+def test_season_note_names_each_uneven_season():
+    period = manager.Period(dt.date(2025, 4, 2), dt.date(2025, 4, 30), dt.date(2025, 3, 4))
+    seasons = pd.DataFrame({"kind": ["ramadan", "eid"], "days_before": [26, 3], "days_now": [0, 0]})
+    note = manager.season_note(seasons, period)
+    assert note.startswith("These dates are not a like-for-like match for the 29 days before.")
+    assert "Ramadan: 26 of the days before, 0 of these days." in note
+    assert "Eid: 3 of the days before, 0 of these days." in note
+    assert "Part of this change is the calendar, not the branch." in note
+    assert note.endswith(findings.SIMULATED_NOTE)
+
+
+def test_season_note_stays_quiet_when_the_periods_match():
+    period = manager.Period(dt.date(2025, 8, 1), dt.date(2025, 8, 31), dt.date(2025, 7, 1))
+    assert manager.season_note(pd.DataFrame({"kind": ["season"], "days_before": [31], "days_now": [31]}),
+                               period) is None
+    assert manager.season_note(pd.DataFrame({"kind": [], "days_before": [], "days_now": []}), period) is None
+
+
+def test_season_note_ignores_a_small_overlap():
+    """The 31 days before October 2025 hold one summer day, which is not a mismatch."""
+    period = manager.Period(dt.date(2025, 10, 1), dt.date(2025, 10, 31), dt.date(2025, 8, 31))
+    seasons = pd.DataFrame({"kind": ["season"], "days_before": [1], "days_now": [0]})
+    assert manager.season_note(seasons, period) is None
+
+
+def test_season_note_starts_at_a_tenth_of_the_days():
+    period = manager.Period(dt.date(2025, 4, 1), dt.date(2025, 4, 30), dt.date(2025, 3, 2))
+    frame = pd.DataFrame({"kind": ["eid"], "days_before": [3], "days_now": [0]})
+    assert manager.season_note(frame, period) is not None
+    assert manager.season_note(frame.assign(days_before=2), period) is None
+
+
+def test_season_note_leaves_out_a_season_that_matches():
+    period = manager.Period(dt.date(2025, 5, 5), dt.date(2025, 6, 9), dt.date(2025, 3, 30))
+    seasons = pd.DataFrame({"kind": ["ramadan", "eid"], "days_before": [0, 3], "days_now": [5, 3]})
+    note = manager.season_note(seasons, period)
+    assert "Ramadan" in note
+    assert "Eid" not in note
+
+
+def test_readme_example_states_the_real_numbers(db_path):
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+    current = manager.totals(daily(db_path, LUSAIL, "2025-04-02", "2025-04-30"))
+    previous = manager.totals(daily(db_path, LUSAIL, "2025-03-04", "2025-04-01"))
+    top = category_changes(db_path, LUSAIL, "2025-03-04", "2025-04-02", "2025-04-30").iloc[0]
+    seasons = season_days(db_path, "2025-03-04", "2025-04-02", "2025-04-30").set_index("kind")
+    assert f"took {100 * (1 - current.revenue / previous.revenue):.1f}% less than the 29 days before" in readme
+    assert f"but {seasons.loc['ramadan', 'days_before']} of those days were Ramadan" in readme
+    assert f"and {seasons.loc['eid', 'days_before']} were Eid" in readme
+    assert f"{top['category']} fell the most, down QAR {-top['change_qar']:,.0f}, mainly {top['main_product']}" in readme
+
+
 def test_csv_round_trip_matches_the_filtered_days(db_path):
     frame = daily(db_path, AL_SADD, "2025-05-01", "2025-05-31")
     parsed = pd.read_csv(io.BytesIO(manager.daily_csv(frame)))
@@ -319,6 +557,59 @@ def test_dates_before_lusail_opened_show_a_message(app_db):
     assert not app.exception
     assert "opened on 2024-09-15" in app.warning[0].value
     assert len(app.get("download_button")) == 0
+
+
+def test_what_changed_appears_when_there_is_a_comparison(app_db):
+    app = open_manager(branch="Lusail", start="2025-04-02", end="2025-04-30")
+    assert not app.exception
+    assert "What changed" in [heading.value for heading in app.subheader]
+    assert app.info[1].value.startswith("Revenue fell")
+    assert "Dates & Nuts moved furthest, down" in app.info[1].value
+    assert app.info[1].value.endswith(findings.SIMULATED_NOTE)
+
+
+def page_warnings(app):
+    """The warnings on the page itself. The sidebar always has one of its own."""
+    return [item.value for item in app.main.warning]
+
+
+def test_season_warning_shows_after_ramadan(app_db):
+    app = open_manager(branch="Lusail", start="2025-04-02", end="2025-04-30")
+    assert not app.exception
+    assert any("Ramadan: 26 of the days before, 0 of these days." in text for text in page_warnings(app))
+
+
+def test_default_view_warns_about_the_summer_holidays(app_db):
+    """The opening 90 days are compared with a period from 5 July, so most of the summer."""
+    app = open_manager()
+    assert not app.exception
+    assert any("Summer holidays: 58 of the days before, 0 of these days." in text for text in page_warnings(app))
+
+
+def test_no_season_warning_when_the_periods_match(app_db):
+    app = open_manager(branch="Al Sadd", start="2025-08-01", end="2025-08-31")
+    assert not app.exception
+    assert page_warnings(app) == []
+
+
+def test_no_season_warning_for_a_single_overlapping_day(app_db):
+    app = open_manager(branch="Al Sadd", start="2025-10-01", end="2025-10-31")
+    assert not app.exception
+    assert page_warnings(app) == []
+
+
+def test_what_changed_follows_the_filters(app_db):
+    app = open_manager(branch="Lusail", start="2025-04-02", end="2025-04-30")
+    before = app.info[1].value
+    app.selectbox[0].set_value("Al Sadd").run()
+    assert not app.exception
+    assert app.info[1].value != before
+
+
+def test_what_changed_is_left_out_without_a_comparison(app_db):
+    app = open_manager(branch="Lusail", start="2024-09-01", end="2024-10-14")
+    assert not app.exception
+    assert "What changed" not in [heading.value for heading in app.subheader]
 
 
 def test_range_across_the_opening_starts_on_opening_day_without_a_comparison(app_db):

@@ -144,6 +144,34 @@ def forecast_weeks(history: pd.DataFrame, held_back: pd.DataFrame) -> alt.TopLev
     )
 
 
+def category_change(changes: pd.DataFrame) -> alt.TopLevelMixin:
+    """Bars either side of zero, biggest move first. Side and sign show the direction
+    as well as the colour, so it never rests on colour alone."""
+    rise, fall = "Rose", "Fell"
+    data = changes.assign(direction=[rise if value >= 0 else fall for value in changes["change_qar"]])
+    room = 1.3  # keeps the value labels inside the plot
+    extent = [min(0.0, data["change_qar"].min() * room), max(0.0, data["change_qar"].max() * room)]
+    base = alt.Chart(data).encode(
+        y=alt.Y("category:N", sort=list(data["category"]), title=None,
+                axis=alt.Axis(labelLimit=240, ticks=False, domain=False)),
+        x=alt.X("change_qar:Q", title="Change in revenue (QAR)", axis=alt.Axis(format=",.0f", tickCount=6),
+                scale=alt.Scale(domain=extent, nice=False)),
+        tooltip=["category", alt.Tooltip("revenue_before_qar", format=",.2f", title="Before (QAR)"),
+                 alt.Tooltip("revenue_now_qar", format=",.2f", title="Now (QAR)"),
+                 alt.Tooltip("change_qar", format="+,.2f", title="Change (QAR)"),
+                 alt.Tooltip("main_product", title="Main product"),
+                 alt.Tooltip("main_product_change_qar", format="+,.2f", title="Its change (QAR)")],
+    )
+    bars = base.mark_bar(height=BAR_THICKNESS, cornerRadiusEnd=4).encode(
+        color=alt.Color("direction:N", sort=[rise, fall], scale=alt.Scale(domain=[rise, fall], range=[BLUE, SERIES[1]])))
+    rises = base.transform_filter(alt.datum.change_qar >= 0).mark_text(align="left", dx=5, color=INK)
+    falls = base.transform_filter(alt.datum.change_qar < 0).mark_text(align="right", dx=-5, color=INK)
+    label = alt.Text("change_qar:Q", format="+,.0f")
+    zero = alt.Chart(pd.DataFrame({"zero": [0]})).mark_rule(color=BASELINE).encode(x="zero:Q")
+    return finish(bars + zero + rises.encode(text=label) + falls.encode(text=label),
+                  height=max(160, ROW_HEIGHT * len(data)))
+
+
 def monthly_revenue(monthly: pd.DataFrame) -> alt.TopLevelMixin:
     data = monthly.assign(
         year=monthly["month"].str[:4],
