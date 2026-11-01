@@ -64,6 +64,14 @@ class Metric:
     delta_color: str = "normal"
 
 
+@dataclass(frozen=True)
+class ChangeSplit:
+    """A change in revenue, split exactly into what orders and basket size did."""
+    total: float
+    orders_effect: float
+    basket_effect: float
+
+
 def _read_date(text: str | None) -> dt.date | None:
     try:
         return dt.date.fromisoformat(text) if text else None
@@ -166,6 +174,43 @@ def finding(branch: str, period: Period, current: Totals, previous: Totals | Non
     if not products.empty:
         top = products.iloc[0]
         text += f" The top product was {top['product']} at {qar(top['revenue_qar'])}."
+    return finish(text)
+
+
+def split_change(current: Totals, previous: Totals) -> ChangeSplit | None:
+    """The orders effect is the orders gained or lost at the earlier average order.
+    The basket effect is the change in average order on the orders taken now."""
+    if not previous.orders:
+        return None
+    total = current.revenue - previous.revenue
+    orders_effect = (current.orders - previous.orders) * previous.revenue / previous.orders
+    return ChangeSplit(total, orders_effect, total - orders_effect)
+
+
+def split_metrics(split: ChangeSplit) -> list[Metric]:
+    return [
+        Metric("Change in revenue (QAR)", f"{split.total:+,.0f}"),
+        Metric("From the number of orders (QAR)", f"{split.orders_effect:+,.0f}"),
+        Metric("From basket size (QAR)", f"{split.basket_effect:+,.0f}"),
+    ]
+
+
+def _effect(value: float, gained: str, lost: str) -> str:
+    return f"{gained} added {qar(value)}" if value >= 0 else f"{lost} took away {qar(-value)}"
+
+
+def change_finding(split: ChangeSplit, period: Period, changes: pd.DataFrame) -> str:
+    """Say what moved revenue, naming the category that moved furthest the same way."""
+    orders = _effect(split.orders_effect, "More orders", "Fewer orders")
+    baskets = _effect(split.basket_effect, "bigger baskets", "smaller baskets")
+    text = (f"Revenue {'rose' if split.total >= 0 else 'fell'} {qar(abs(split.total))} compared with the "
+            f"{period.days} days before. {orders} and {baskets}.")
+    same_way = changes[(changes["change_qar"] >= 0) == (split.total >= 0)]
+    if not same_way.empty:
+        top = same_way.iloc[0]
+        direction = "up" if top["change_qar"] >= 0 else "down"
+        text += (f" {top['category']} moved furthest, {direction} {qar(abs(top['change_qar']))}, "
+                 f"mainly {top['main_product']} at {qar(abs(top['main_product_change_qar']))}.")
     return finish(text)
 
 

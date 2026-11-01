@@ -331,6 +331,68 @@ def test_finding_for_a_period_with_no_orders_is_still_labelled():
     assert text.endswith(findings.SIMULATED_NOTE)
 
 
+def totals_of(orders, revenue):
+    return manager.Totals(30, orders, 0, 0, revenue, 0.0, 0)
+
+
+def test_split_change_matches_a_worked_example():
+    """10 orders at QAR 90, then 12 at QAR 100: 2 more orders at 90, and 10 extra on each of the 12."""
+    split = manager.split_change(totals_of(12, 1200.0), totals_of(10, 900.0))
+    assert split == manager.ChangeSplit(300.0, 180.0, 120.0)
+
+
+def test_split_change_when_effects_pull_opposite_ways():
+    split = manager.split_change(totals_of(20, 1000.0), totals_of(10, 800.0))
+    assert split.total == 200.0
+    assert split.orders_effect == 800.0
+    assert split.basket_effect == -600.0
+
+
+def test_split_change_when_nothing_sold_in_the_current_period():
+    split = manager.split_change(totals_of(0, 0.0), totals_of(10, 900.0))
+    assert split == manager.ChangeSplit(-900.0, -900.0, 0.0)
+
+
+def test_split_change_needs_earlier_orders():
+    assert manager.split_change(totals_of(5, 100.0), totals_of(0, 0.0)) is None
+
+
+def test_split_adds_up_on_real_numbers(db_path):
+    current = manager.totals(daily(db_path, LUSAIL, "2025-04-02", "2025-04-30"))
+    previous = manager.totals(daily(db_path, LUSAIL, "2025-03-04", "2025-04-01"))
+    split = manager.split_change(current, previous)
+    assert split.orders_effect + split.basket_effect == pytest.approx(current.revenue - previous.revenue)
+    assert split.orders_effect == pytest.approx(
+        (current.orders - previous.orders) * previous.average_order_value)
+    assert split.basket_effect == pytest.approx(
+        current.orders * (current.average_order_value - previous.average_order_value))
+
+
+def test_change_finding_names_the_biggest_move_the_same_way_as_the_total():
+    period = manager.Period(dt.date(2025, 4, 1), dt.date(2025, 4, 30), dt.date(2025, 3, 2))
+    changes = pd.DataFrame({
+        "category": ["Household", "Frozen"], "change_qar": [500.0, -300.0],
+        "main_product": ["Soap", "Fries"], "main_product_change_qar": [200.0, -250.0],
+    })
+    falling = manager.ChangeSplit(-100.0, -40.0, -60.0)
+    text = manager.change_finding(falling, period, changes)
+    assert text.startswith("Revenue fell QAR 100 compared with the 30 days before.")
+    assert "Fewer orders took away QAR 40 and smaller baskets took away QAR 60." in text
+    assert "Frozen moved furthest, down QAR 300, mainly Fries at QAR 250." in text
+    assert "Household" not in text
+    assert text.endswith(findings.SIMULATED_NOTE)
+
+
+def test_change_finding_when_orders_rise_and_baskets_shrink():
+    period = manager.Period(dt.date(2025, 4, 1), dt.date(2025, 4, 30), dt.date(2025, 3, 2))
+    changes = pd.DataFrame({"category": ["Household"], "change_qar": [200.0], "main_product": ["Soap"],
+                            "main_product_change_qar": [150.0]})
+    text = manager.change_finding(manager.ChangeSplit(200.0, 800.0, -600.0), period, changes)
+    assert "Revenue rose QAR 200" in text
+    assert "More orders added QAR 800 and smaller baskets took away QAR 600." in text
+    assert "Household moved furthest, up QAR 200" in text
+
+
 def test_csv_round_trip_matches_the_filtered_days(db_path):
     frame = daily(db_path, AL_SADD, "2025-05-01", "2025-05-31")
     parsed = pd.read_csv(io.BytesIO(manager.daily_csv(frame)))
@@ -411,6 +473,29 @@ def test_dates_before_lusail_opened_show_a_message(app_db):
     assert not app.exception
     assert "opened on 2024-09-15" in app.warning[0].value
     assert len(app.get("download_button")) == 0
+
+
+def test_what_changed_appears_when_there_is_a_comparison(app_db):
+    app = open_manager(branch="Lusail", start="2025-04-02", end="2025-04-30")
+    assert not app.exception
+    assert "What changed" in [heading.value for heading in app.subheader]
+    assert app.info[1].value.startswith("Revenue fell")
+    assert "Dates & Nuts moved furthest, down" in app.info[1].value
+    assert app.info[1].value.endswith(findings.SIMULATED_NOTE)
+
+
+def test_what_changed_follows_the_filters(app_db):
+    app = open_manager(branch="Lusail", start="2025-04-02", end="2025-04-30")
+    before = app.info[1].value
+    app.selectbox[0].set_value("Al Sadd").run()
+    assert not app.exception
+    assert app.info[1].value != before
+
+
+def test_what_changed_is_left_out_without_a_comparison(app_db):
+    app = open_manager(branch="Lusail", start="2024-09-01", end="2024-10-14")
+    assert not app.exception
+    assert "What changed" not in [heading.value for heading in app.subheader]
 
 
 def test_range_across_the_opening_starts_on_opening_day_without_a_comparison(app_db):

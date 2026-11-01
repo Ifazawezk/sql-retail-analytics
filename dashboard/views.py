@@ -155,6 +155,17 @@ def show_period_metrics(current: manager.Totals, previous: manager.Totals | None
         column.metric(metric.label, metric.value, delta=metric.delta, delta_color=metric.delta_color)
 
 
+def show_what_changed(split: manager.ChangeSplit, period: manager.Period, changes: Loaded) -> None:
+    st.subheader("What changed")
+    show_finding(manager.change_finding(split, period, changes.frame))
+    for column, metric in zip(st.columns(3), manager.split_metrics(split)):
+        column.metric(metric.label, metric.value)
+    show_chart(charts.category_change(changes.frame), "Change in revenue for each category, largest move first.")
+    st.caption("Before rounding, the two effects add up to the change in revenue, and so do the categories. Hover "
+               "over a bar, or open the numbers below, for the product that moved it most. At a few orders a day, "
+               "small moves can be chance.")
+
+
 def manager_page() -> None:
     st.header("Branch manager")
     branches = sql_file("manager/branch_list.sql").frame
@@ -197,6 +208,13 @@ def manager_page() -> None:
         st.caption(f"Changes compare with the {period.days} days before.")
     show_finding(manager.finding(branch, period, current, previous, current_days, products.frame))
 
+    split = None if previous is None else manager.split_change(current, previous)
+    changes = None
+    if split is not None:
+        changes = sql_file("manager/change_by_category.sql", previous_start=period.previous_start.isoformat(),
+                           start_date=period.start.isoformat(), **params)
+        show_what_changed(split, period, changes)
+
     st.subheader("Revenue by day")
     show_chart(charts.daily_revenue(current_days), "Daily revenue with a 7-day average line.")
 
@@ -213,7 +231,7 @@ def manager_page() -> None:
                        file_name=manager.csv_name(branch, period), mime="text/csv")
     st.caption("The file has one row per day the branch was open in these dates. Its last column says the "
                "data is simulated.")
-    show_sources(daily, products)
+    show_sources(*[item for item in (daily, products, changes) if item is not None])
 
 
 def forecast_page() -> None:

@@ -96,7 +96,7 @@ ones `python run.py` prints.
 | Branch ranking | Revenue per trading day and sales per square metre, by year | Q20, Q02 |
 | Customers | RFM segments and monthly cohort retention | Q17, Q18 |
 | Basket pairs | Pairs bought together, ranked by lift | Q19 |
-| Branch manager | One branch and date range: sales, change on the period before, top products, CSV | `queries/manager/` |
+| Branch manager | One branch and date range: sales, change on the period before and what caused it, top products, CSV | `queries/manager/` |
 | Sales forecast | The forecast test, error by branch, and the next four weeks | `queries/forecast/` |
 | Harder questions | Promotion uplift, lifetime value, stock-out proxies, delivery growth, returns by channel | Q26 to Q30 |
 
@@ -119,6 +119,13 @@ Pick a branch and a date range to see that branch's revenue, orders, average
 order, gross margin, delivery share and return rate, each compared with the same
 number of days before. The daily sales for those dates download as a CSV, and
 the last column of the file says the data is simulated.
+
+When there is a period to compare with, a "What changed" section says why revenue
+moved. It splits the change into orders gained or lost and basket size, in the same
+way as Q29, and ranks the categories by how far each one moved, with the product
+that moved each one most. The two effects add up to the change in revenue, and so
+do the categories. For a falling category, the product named is the one that fell
+furthest, even if another product in it rose by more.
 
 Filters need parameters, so this page runs the files in `queries/manager/`. They
 are ordinary .sql files that take `:branch_id`, `:start_date` and `:end_date`,
