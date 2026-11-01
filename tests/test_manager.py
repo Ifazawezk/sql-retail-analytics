@@ -30,6 +30,12 @@ def top_products(db_path, branch_id, start, end):
                          {"branch_id": branch_id, "start_date": start, "end_date": end}, db_path).frame
 
 
+def category_changes(db_path, branch_id, previous_start, start, end):
+    return data.load_sql("manager/change_by_category.sql",
+                         {"branch_id": branch_id, "previous_start": previous_start, "start_date": start,
+                          "end_date": end}, db_path).frame
+
+
 def scalar(db_path, sql, *params):
     conn = sqlite3.connect(db_path)
     try:
@@ -123,6 +129,92 @@ def test_top_products_respect_branch_and_dates(db_path):
     """, (frame.loc[0, "product"],)).fetchone()[0]
     conn.close()
     assert frame.loc[0, "revenue_qar"] == expected
+
+
+def test_category_changes_match_the_daily_sales_of_both_periods(db_path):
+    """The two files reach the numbers separately, so they check each other."""
+    for branch_id in (AL_SADD, LUSAIL):
+        frame = category_changes(db_path, branch_id, "2025-03-04", "2025-04-02", "2025-04-30")
+        before = daily(db_path, branch_id, "2025-03-04", "2025-04-01")["revenue_qar"].sum()
+        now = daily(db_path, branch_id, "2025-04-02", "2025-04-30")["revenue_qar"].sum()
+        tolerance = 0.01 * len(frame) + 0.01 * 29
+        assert frame["revenue_before_qar"].sum() == pytest.approx(before, abs=tolerance)
+        assert frame["revenue_now_qar"].sum() == pytest.approx(now, abs=tolerance)
+        assert frame["change_qar"].sum() == pytest.approx(now - before, abs=2 * tolerance)
+
+
+def test_category_changes_are_ranked_by_the_size_of_the_move(db_path):
+    frame = category_changes(db_path, AL_SADD, "2025-03-04", "2025-04-02", "2025-04-30")
+    sizes = list(frame["change_qar"].abs())
+    assert sizes == sorted(sizes, reverse=True)
+
+
+def test_orders_on_the_edges_of_the_periods_land_on_the_right_side(tmp_path, db_path):
+    """The last evening counts, and the first day of the current period is not 'before'."""
+    copy = tmp_path / "edges.db"
+    source = sqlite3.connect(db_path)
+    target = sqlite3.connect(copy)
+    source.backup(target)
+    source.close()
+    before = category_changes(copy, AL_SADD, "2025-05-01", "2025-05-11", "2025-05-20").set_index("category")
+    product_id, category, price, cost = target.execute("""
+        SELECT p.product_id, c.name, p.unit_price, p.unit_cost FROM products p JOIN categories c USING (category_id)
+        LIMIT 1""").fetchone()
+    for moment in ("2025-05-20 23:30", "2025-05-11 00:05"):
+        order = target.execute("""INSERT INTO orders (customer_id, branch_id, ordered_at, channel, payment_method)
+                                  VALUES (1, 1, ?, 'in_store', 'card')""", (moment,)).lastrowid
+        target.execute("""INSERT INTO order_items (order_id, product_id, quantity, unit_price, unit_cost, line_total)
+                          VALUES (?, ?, 1, ?, ?, ?)""", (order, product_id, price, cost, price))
+    target.commit()
+    target.close()
+    after = category_changes(copy, AL_SADD, "2025-05-01", "2025-05-11", "2025-05-20").set_index("category")
+    assert after.loc[category, "revenue_now_qar"] == pytest.approx(
+        before.loc[category, "revenue_now_qar"] + 2 * price, abs=0.01)
+    assert after.loc[category, "revenue_before_qar"] == before.loc[category, "revenue_before_qar"]
+
+
+def test_category_sold_in_only_one_period_keeps_its_row(tmp_path, db_path):
+    copy = tmp_path / "one_period.db"
+    source = sqlite3.connect(db_path)
+    target = sqlite3.connect(copy)
+    source.backup(target)
+    source.close()
+    frame = category_changes(db_path, AL_SADD, "2025-05-01", "2025-05-16", "2025-05-30")
+    category = frame.iloc[0]["category"]
+    target.execute("""
+        DELETE FROM returns WHERE order_item_id IN (
+            SELECT oi.order_item_id FROM order_items oi JOIN orders o USING (order_id)
+            JOIN products p USING (product_id) JOIN categories c USING (category_id)
+            WHERE c.name = ? AND o.branch_id = 1 AND o.ordered_at >= '2025-05-16')""", (category,))
+    target.execute("""
+        DELETE FROM order_items WHERE order_item_id IN (
+            SELECT oi.order_item_id FROM order_items oi JOIN orders o USING (order_id)
+            JOIN products p USING (product_id) JOIN categories c USING (category_id)
+            WHERE c.name = ? AND o.branch_id = 1 AND o.ordered_at >= '2025-05-16')""", (category,))
+    target.commit()
+    target.close()
+    row = category_changes(copy, AL_SADD, "2025-05-01", "2025-05-16", "2025-05-30").set_index("category").loc[category]
+    assert row["revenue_now_qar"] == 0
+    assert row["change_qar"] == -row["revenue_before_qar"]
+
+
+def test_main_product_is_the_biggest_move_the_same_way_as_its_category(db_path):
+    """Worked out here from the raw rows, so the window function has to agree."""
+    frame = category_changes(db_path, AL_SADD, "2025-03-04", "2025-04-02", "2025-04-30")
+    conn = sqlite3.connect(db_path)
+    rows = pd.read_sql_query("""
+        SELECT c.name AS category, p.name AS product,
+               SUM(CASE WHEN o.ordered_at >= '2025-04-02' THEN oi.line_total ELSE -oi.line_total END) AS change
+        FROM orders o JOIN order_items oi USING (order_id) JOIN products p USING (product_id)
+        JOIN categories c USING (category_id)
+        WHERE o.branch_id = 1 AND o.ordered_at >= '2025-03-04' AND o.ordered_at < '2025-05-01'
+        GROUP BY c.name, p.name""", conn)
+    conn.close()
+    for row in frame.itertuples():
+        products = rows[rows["category"] == row.category]
+        expected = products["change"].max() if row.change_qar >= 0 else products["change"].min()
+        assert row.main_product_change_qar == pytest.approx(expected, abs=0.01)
+        assert row.main_product_change_qar * row.change_qar > 0
 
 
 # ---------------------------------------------------------------------------
