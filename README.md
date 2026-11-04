@@ -1,22 +1,36 @@
-# SQL Retail Analytics
+# SQL retail analytics
 
-A SQL portfolio project built around a small grocery chain in Qatar. It has
-a SQLite database with two years of sales across five branches (prices in
-Qatari riyals, QAR) and 30 queries that answer the questions a store manager
-or a commercial team would actually ask: how are sales trending, which branch
-is doing best, who are the best customers, what sells together, and how much
-does Ramadan change things. A Streamlit dashboard shows the main results as
-charts, each with a short written finding computed from the data, and a weekly
-sales forecast is tested against a simple baseline on a held-back period.
+Thirty SQL queries over a made-up grocery chain in Qatar: two years of sales across five branches, with prices in Qatari riyals (QAR). They answer the questions a store manager or a commercial team would ask. How are sales trending, which branch is doing best, who are the best customers, what sells together, and how much does Ramadan change things? A Streamlit dashboard charts the main results, each with a short written finding computed from the data, and a weekly sales forecast is tested against a simple baseline on a held-back period.
 
-The database, the queries and `run.py` use only Python's standard library.
-The dashboard and the forecast need a few packages, listed in
-`requirements-dashboard.txt`.
+The database, the queries and `run.py` use only Python's standard library. The dashboard and the forecast need the packages in `requirements-dashboard.txt`.
+
+![Revenue page](docs/screenshots/revenue.png)
+
+## Running the queries
+
+You need Python 3 (tested on 3.12). Its built-in `sqlite3` module is enough, but the queries use window functions and the `WINDOW` clause, which need SQLite 3.28 or newer.
+
+```
+python seed.py                 # builds retail.db, takes about a second
+python run.py                  # runs all 30 queries and prints the results
+python run.py 10 19            # runs only Q10 and Q19
+python run.py --max-rows 10    # shortens long results
+```
+
+`seed.py` also takes `--db` and `--seed` for a different file or a different random dataset. `retail.db` is not committed, so run `python seed.py` first or open the dashboard, which builds it if it is missing. The query files are plain SQL and run in any SQLite client too, for example `sqlite3 retail.db < queries/05_weekday_pattern.sql`.
+
+To run the tests:
+
+```
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+They build a fresh database in a temporary folder, run every query and check that the results make sense: the expected columns come back, revenue totals agree across queries, shares add up to 100, the running total ends at the yearly total, the weekend is the busiest part of the week, and so on. They also run every dashboard page through Streamlit's test runner, recompute the written findings from the query results, check that the forecast never sees the held-back weeks, and check the main numbers in this README against the queries.
 
 ## The data
 
-`seed.py` builds `retail.db` from a fixed random seed, so every run gives
-the same numbers. The data is made up but shaped to behave like a real chain:
+`seed.py` builds `retail.db` from a fixed random seed, so every run gives the same numbers. The data is made up but shaped to behave like a real chain:
 
 | Table | Rows | What it holds |
 |---|---|---|
@@ -39,182 +53,9 @@ Patterns built into the data:
 - Cash slowly gives way to cards and mobile wallets, and delivery grows as a share of orders.
 - Some products tend to be bought together (bread and foul, spaghetti and tomato paste, Arabic coffee and cardamom).
 
-Revenue in every query means the sum of `order_items.line_total`: after
-discounts, before returns. Returns are analysed separately in Q09.
+Customer names are random combinations of common first and family names, not real people. Ramadan and Eid dates follow the dates observed in Qatar in 2024 and 2025.
 
-## How to run
-
-You need Python 3 (tested on 3.12). The `sqlite3` module that ships with
-Python is enough; the queries use window functions and the `WINDOW` clause,
-which need SQLite 3.28 or newer.
-
-```
-python seed.py                 # builds retail.db, takes about a second
-python run.py                  # runs all 30 queries and prints the results
-python run.py 10 19            # runs only Q10 and Q19
-python run.py --max-rows 10    # shortens long results
-```
-
-`seed.py` also takes `--db` and `--seed` if you want a different file or a
-different random dataset.
-
-To run the tests:
-
-```
-pip install -r requirements-dev.txt
-python -m pytest
-```
-
-The tests build a fresh database in a temporary folder, run every query and
-check that the results make sense: the expected columns come back, revenue
-totals agree across queries, shares add up to 100, the running total ends at
-the yearly total, the weekend is the busiest part of the week, and so on. They
-also run every dashboard page through Streamlit's test runner, recompute the
-written findings from the query results, check that the forecast never sees the
-held-back weeks, and check the main numbers in this README against the queries.
-
-The query files are plain SQL, so you can also run them in any SQLite
-client, for example `sqlite3 retail.db < queries/05_weekday_pattern.sql`.
-
-## Dashboard
-
-```
-pip install -r requirements-dashboard.txt
-streamlit run app.py
-```
-
-If `retail.db` does not exist yet, the app builds it the first time it opens.
-
-The dashboard holds no SQL of its own. It runs the files in `queries/`, and a
-test fails if SQL appears in its Python code. The numbered files are the same
-ones `python run.py` prints.
-
-| Page | What it shows | Query files |
-|---|---|---|
-| Revenue | Monthly revenue by year, share by category | Q01, Q04 |
-| Ramadan and weekends | Ramadan against the rest of the year, shopping hours, each day of the week | Q10, Q24, Q05 |
-| Branch ranking | Revenue per trading day and sales per square metre, by year | Q20, Q02 |
-| Customers | RFM segments and monthly cohort retention | Q17, Q18 |
-| Basket pairs | Pairs bought together, ranked by lift | Q19 |
-| Branch manager | One branch and date range: sales, change on the period before and what caused it, top products, CSV | `queries/manager/` |
-| Sales forecast | The forecast test, error by branch, and the next four weeks | `queries/forecast/` |
-| Harder questions | Promotion uplift, lifetime value, stock-out proxies, delivery growth, returns by channel | Q26 to Q30 |
-
-Each section has a finding such as "Friday and Saturday, the weekend in Qatar,
-averaged QAR 677 a day against QAR 463 from Sunday to Thursday". The sentences
-are built from the query results, so they change if the data changes. The data
-is generated, so every finding ends by saying it is simulated data, not a real
-business, and the sidebar says the same on every page. Every chart has a table
-of its numbers below it.
-
-![Revenue page](docs/screenshots/revenue.png)
-
-![Ramadan and weekends page](docs/screenshots/ramadan_weekends.png)
-
-![Customers page](docs/screenshots/customers.png)
-
-### Branch manager view
-
-Pick a branch and a date range to see that branch's revenue, orders, average
-order, gross margin, delivery share and return rate, each compared with the same
-number of days before. The daily sales for those dates download as a CSV, and
-the last column of the file says the data is simulated.
-
-When there is a period to compare with, a "What changed" section says why revenue
-moved. It splits the change into orders gained or lost and basket size, in the same
-way as Q29, and ranks the categories by how far each one moved, with the product
-that moved each one most. The two effects add up to the change in revenue, and so
-do the categories. For a falling category, the product named is the one that fell
-furthest, even if another product in it rose by more.
-
-The same section warns when the two periods are not a fair match. If Ramadan, Eid
-or the summer holidays differ between them by a tenth of the days or more, it gives
-the days in each and says part of the change is the calendar, not the branch. A
-smaller gap gets no warning, and the two Eids count as one kind, so three days of
-each is a match. For example, Lusail from 2025-04-02 to 2025-04-30 took 47.5% less
-than the 29 days before, but 26 of those days were Ramadan and 3 were Eid. Dates &
-Nuts fell the most, down QAR 672, mainly Medjool Dates 1kg. The page opens on a
-warning too, because the 90 days before its default dates hold most of the summer.
-
-Filters need parameters, so this page runs the files in `queries/manager/`. They
-are ordinary .sql files that take `:branch_id`, `:start_date` and `:end_date`,
-and `python run.py` does not run them. Two rules keep the numbers fair:
-
-- A day with no orders counts as zero, but days before a branch opened do not count at all.
-- If the period before is cut short by the opening date or the start of the data, no change is shown. Comparing with half a period would give a large growth figure that means nothing.
-
-A link can open the page on a branch and dates, for example
-`?view=manager&branch=Lusail&start=2025-02-01&end=2025-04-30`.
-
-![Branch manager page](docs/screenshots/branch_manager.png)
-
-### How the screenshots were taken
-
-The screenshots are real captures of the running app, taken with headless Edge
-by `python tools/take_screenshots.py`. The script stops without saving if a page
-shows an error or has no simulated-data notice. The other pages are in
-`docs/screenshots/`.
-
-## Sales forecast
-
-**The model did not beat the baseline.** On the 13 weeks held back, it was off
-by QAR 300 a week per branch on average, against QAR 244 for the baseline, which
-makes it 22.8% worse. This describes simulated data, not a real business.
-
-```
-python forecast.py
-```
-
-| Branch | Average weekly revenue (QAR) | Baseline error (QAR) | Model error (QAR) | Closer |
-|---|---:|---:|---:|---|
-| Al Khor | 397 | 160 | 149 | Model |
-| Al Rayyan | 1,194 | 249 | 622 | Baseline |
-| Al Sadd | 1,387 | 374 | 349 | Model |
-| Al Wakrah | 484 | 164 | 191 | Baseline |
-| Lusail | 883 | 274 | 188 | Model |
-
-How the test works:
-
-- The target is revenue per branch per full Monday to Sunday week. Days are too noisy, because a branch takes one to three orders on a day it trades, and some days none. Part-weeks at the end of the data and at Lusail's opening are left out.
-- The last 13 full weeks, 2025-09-29 to 2025-12-28, are held back. Both methods see only the weeks before that and forecast the whole period in one go.
-- The baseline is the average of the last 4 weeks before the test, held flat. Same week last year is not used, because Ramadan moves and Lusail has no full year before the test.
-- The model is a straight-line fit on log revenue for each branch, with a trend and the share of each week in Ramadan, Eid, the summer holidays and the days after payday. All of those are known in advance.
-- The winner is whichever has the lower average error across all branch weeks. A test checks that changing the held-back revenue does not change either forecast.
-
-Why it lost: the model's advantage is knowing the calendar, and this test period
-has almost no events in it. What remains is its trend, which carried Al Rayyan's
-fast growth forward and over-forecast that branch by 52.1%. The model was closer
-at three of the five branches, but its Al Rayyan miss outweighed them.
-
-This was not bad luck on one dataset. The same design, unchanged, lost on 9 of
-10 other seeds, with a median error about 10% above the baseline. To repeat
-that, run `python seed.py --db other.db --seed 1`, then
-`python forecast.py --db other.db`, for seeds 1 to 10.
-
-Because the baseline won, the baseline sets the next four weeks shown on the
-dashboard. The model was left as it was once the test had been run: changing it
-now and scoring it on the same weeks would no longer be a fair test. The design
-was chosen on a validation window inside the training data, where the model did
-win, but that window was the summer, when knowing the calendar helps most.
-
-![Sales forecast page](docs/screenshots/forecast.png)
-
-## Project layout
-
-```
-schema.sql                  tables, keys, checks and indexes
-seed.py                     builds retail.db
-run.py                      runs the queries and prints tables
-queries/                    one .sql file per business question
-queries/manager/            parameterised .sql files for the branch manager page, including what changed
-queries/forecast/           .sql files that feed the forecast
-forecast.py                 the weekly forecast, its baseline and the held-back test
-app.py                      Streamlit entry point
-dashboard/                  data loading, written findings, charts and pages
-tools/take_screenshots.py   captures the README screenshots with headless Edge
-docs/screenshots/           those screenshots
-tests/                      pytest tests for the data, the queries, run.py and the dashboard
-```
+Revenue in every query means the sum of `order_items.line_total`: after discounts, before returns. Returns are analysed separately in Q09.
 
 ## The 30 questions
 
@@ -251,25 +92,17 @@ tests/                      pytest tests for the data, the queries, run.py and t
 | 29 | Delivery growth split into more orders and basket size | Year-on-year periods from the data, exact decomposition |
 | 30 | Return rates by category and channel, with a significance test | Chi-square in SQL, total row with UNION ALL |
 
-## How the harder questions were checked
+A few things the queries find, all patterns `seed.py` was written to produce:
 
-The five newest queries each have a trap in them, and each was checked against
-something outside the query. All numbers here describe simulated data, not a
-real business.
+- Friday and Saturday average about QAR 690 and QAR 665 a day, against about QAR 410 to 420 on Monday and Tuesday (Q05).
+- Lusail only opened in September 2024 but was already third of five branches on daily revenue in 2025 (Q20).
+- Cash fell from 31.3% of orders in 2024 to 24.6% in 2025, while wallet payments went from 10.1% to 17.2% (Q06).
+- Delivery grew from 7.5% of orders in the first quarter of 2024 to 18.5% in the last quarter of 2025 (Q25).
+- Discounted lines carry a gross margin of about 15 to 16%, against about 26% at full price (Q23).
 
-- **Q26, promotion uplift.** The database has no promotions table, so promotions are read from sales, and a promotion week with no sales leaves no trace. `seed.py` knows the real promotion calendar, so the estimate can be tested. Using only steady sellers, Q26 gives 60.7% against a true 58.7%. Reading discounts across all products would have given 85.2% against a true 64.6%. The result: units rise about 60% but gross profit per 100 orders falls 8.1%, so the extra volume does not cover the discount.
-- **Q27, lifetime value.** Lifetime spend flatters older customers, so everyone is measured over the same time since joining, and cohorts too young for a figure show a blank. Customers who stopped shopping stay in the average.
-- **Q28, stock-out proxies.** There is no stock data, and `seed.py` never takes a product off the shelf, so every gap in the sample data is chance. That makes it a good test of false alarms. A first version called all 15 of its top gaps likely stock-outs, so the line was reset from 11 seeds of about 3,000 gaps each, where the score never reached 12. The limit is real: a test removes two months of the best seller at the biggest branch and Q28 finds it, but a one-month gap scores 11.4 and is missed. At these volumes only long gaps in best sellers can be told from chance.
-- **Q29, delivery growth.** Comparing the latest three months with the same months a year earlier keeps the season equal. Orders went from 78 to 140, so branch figures rest on few orders. The two effects add up exactly to the change in revenue.
-- **Q30, returns by channel.** Delivered lines came back 1.56 times as often as in-store lines, close to the 1.5 built into `seed.py`. Eleven of the 13 categories have too few returns to judge alone, and the query says so instead of ranking them.
+### Example output
 
-![Harder questions page](docs/screenshots/harder_questions.png)
-
-## Example output
-
-These are pasted from `python run.py` on the default seed.
-
-**Q10: Ramadan days bring in far more revenue than ordinary days**
+These are pasted from `python run.py` on the default seed. Ramadan days bring in far more revenue than ordinary days:
 
 ```
 Q10. How much busier is an average day in Ramadan than the rest of the year?
@@ -283,7 +116,7 @@ year  period        days  avg_daily_orders  avg_daily_revenue_qar  avg_order_val
 2025  Rest of year   336               7.7                 568.85                74.17                 0.0
 ```
 
-**Q19: Basket pairs, sorted by lift** (`python run.py 19 --max-rows 8`)
+Basket pairs sorted by lift (`python run.py 19 --max-rows 8`):
 
 ```
 Q19. Which pairs of products are bought together far more often than chance would suggest?
@@ -302,7 +135,7 @@ Minced Beef 500g          Spaghetti 500g                              82        
 ... 7 more rows
 ```
 
-**Q24: Shopping moves to the evening during Ramadan**
+Shopping moves to the evening during Ramadan:
 
 ```
 Q24. At what time of day do people shop during Ramadan compared with the rest of the year?
@@ -317,22 +150,100 @@ Evening (19:00-21:59)                    166               31.5         1,423   
 Late night (22:00-23:59)                 129               24.5           425              9.1
 ```
 
-## A few things the queries show
+### Checking the harder questions
 
-Because the data is made up, these are patterns `seed.py` was written to
-produce. The point is that the SQL finds them and puts numbers on them.
+Each of the five newest queries has a trap in it, and each was checked against something outside the query. All numbers here describe simulated data, not a real business.
 
-- Friday and Saturday average about QAR 690 and QAR 665 a day, against about QAR 410 to 420 on Monday and Tuesday (Q05).
-- Lusail only opened in September 2024 but was already third of five branches on daily revenue in 2025 (Q20).
-- Cash fell from 31.3% of orders in 2024 to 24.6% in 2025, while wallet payments went from 10.1% to 17.2% (Q06).
-- Delivery grew from 7.5% of orders in the first quarter of 2024 to 18.5% in the last quarter of 2025 (Q25).
-- Discounted lines carry a gross margin of about 15 to 16%, against about 26% at full price (Q23).
+- Q26 (promotion uplift). The database has no promotions table, so promotions are read from sales, and a promotion week with no sales leaves no trace. `seed.py` knows the real promotion calendar, so the estimate can be tested. Using only steady sellers, Q26 gives 60.7% against a true 58.7%. Reading discounts across all products would have given 85.2% against a true 64.6%. Units rise about 60% but gross profit per 100 orders falls 8.1%, so the extra volume does not cover the discount.
+- Q27 (lifetime value). Lifetime spend flatters older customers, so everyone is measured over the same time since joining, and cohorts too young for a figure show a blank. Customers who stopped shopping stay in the average.
+- Q28 (stock-out proxies). There is no stock data, and `seed.py` never takes a product off the shelf, so every gap in the sample data is chance, which makes it a good test of false alarms. A first version called all 15 of its top gaps likely stock-outs, so the line was reset from 11 seeds of about 3,000 gaps each, where the score never reached 12. A test removes two months of the best seller at the biggest branch and Q28 finds it, but a one-month gap scores 11.4 and is missed. At these volumes only long gaps in best sellers can be told from chance.
+- Q29 (delivery growth). Comparing the latest three months with the same months a year earlier keeps the season equal. Orders went from 78 to 140, so branch figures rest on few orders. The two effects add up exactly to the change in revenue.
+- Q30 (returns by channel). Delivered lines came back 1.56 times as often as in-store lines, close to the 1.5 built into `seed.py`. Eleven of the 13 categories have too few returns to judge alone, and the query says so instead of ranking them.
 
-## Notes
+## Dashboard
 
-- Customer names are random combinations of common first and family names. They are not real people.
-- Ramadan and Eid dates follow the dates observed in Qatar in 2024 and 2025.
-- `retail.db` is not committed. Run `python seed.py` to build it, or open the dashboard, which builds it if it is missing.
+```
+pip install -r requirements-dashboard.txt
+streamlit run app.py
+```
+
+If `retail.db` does not exist yet, the app builds it the first time it opens. The dashboard holds no SQL of its own: it runs the numbered files in `queries/`, the same ones `python run.py` prints, and a test fails if SQL appears in its Python code.
+
+| Page | What it shows | Query files |
+|---|---|---|
+| Revenue | Monthly revenue by year, share by category | Q01, Q04 |
+| Ramadan and weekends | Ramadan against the rest of the year, shopping hours, each day of the week | Q10, Q24, Q05 |
+| Branch ranking | Revenue per trading day and sales per square metre, by year | Q20, Q02 |
+| Customers | RFM segments and monthly cohort retention | Q17, Q18 |
+| Basket pairs | Pairs bought together, ranked by lift | Q19 |
+| Branch manager | One branch and date range: sales, change on the period before and what caused it, top products, CSV | `queries/manager/` |
+| Sales forecast | The forecast test, error by branch, and the next four weeks | `queries/forecast/` |
+| Harder questions | Promotion uplift, lifetime value, stock-out proxies, delivery growth, returns by channel | Q26 to Q30 |
+
+Each section has a finding built from the query results, such as "Friday and Saturday, the weekend in Qatar, averaged QAR 677 a day against QAR 463 from Sunday to Thursday", so it changes if the data changes. Every finding ends by saying the data is simulated, not a real business, and the sidebar says the same on every page. Every chart has a table of its numbers below it.
+
+The screenshots are captures of the running app, taken with headless Edge by `python tools/take_screenshots.py`. The script stops without saving if a page shows an error or has no simulated-data notice. The other pages are in `docs/screenshots/`.
+
+![Ramadan and weekends page](docs/screenshots/ramadan_weekends.png)
+
+![Customers page](docs/screenshots/customers.png)
+
+![Harder questions page](docs/screenshots/harder_questions.png)
+
+### Branch manager view
+
+Pick a branch and a date range to see its revenue, orders, average order, gross margin, delivery share and return rate, each compared with the same number of days before. The daily sales for those dates download as a CSV, and the last column of the file says the data is simulated. A link can open the page on a branch and dates, for example `?view=manager&branch=Lusail&start=2025-02-01&end=2025-04-30`.
+
+When there is a period to compare with, a "What changed" section splits the change in revenue into orders gained or lost and basket size, in the same way as Q29. It also ranks the categories by how far each one moved, with the product that moved each one most. The two effects add up to the change in revenue, and so do the categories. For a falling category, the product named is the one that fell furthest, even if another product in it rose by more.
+
+The same section warns when the two periods are not a fair match. If Ramadan, Eid or the summer holidays differ between them by a tenth of the days or more, it gives the days in each and says part of the change is the calendar, not the branch. A smaller gap gets no warning, and the two Eids count as one kind, so three days of each is a match. For example, Lusail from 2025-04-02 to 2025-04-30 took 47.5% less than the 29 days before, but 26 of those days were Ramadan and 3 were Eid. Dates & Nuts fell the most, down QAR 672, mainly Medjool Dates 1kg. The page opens on a warning too, because the 90 days before its default dates hold most of the summer.
+
+The page runs the files in `queries/manager/`, ordinary .sql files that take `:branch_id`, `:start_date` and `:end_date`. `python run.py` does not run them. A day with no orders counts as zero, but days before a branch opened do not count at all. If the period before is cut short by the opening date or the start of the data, no change is shown, because comparing with half a period would give a large growth figure that means nothing.
+
+![Branch manager page](docs/screenshots/branch_manager.png)
+
+## Sales forecast
+
+**The model did not beat the baseline.** On the 13 weeks held back, it was off by QAR 300 a week per branch on average, against QAR 244 for the baseline, which makes it 22.8% worse. This describes simulated data, not a real business.
+
+```
+python forecast.py
+```
+
+| Branch | Average weekly revenue (QAR) | Baseline error (QAR) | Model error (QAR) | Closer |
+|---|---:|---:|---:|---|
+| Al Khor | 397 | 160 | 149 | Model |
+| Al Rayyan | 1,194 | 249 | 622 | Baseline |
+| Al Sadd | 1,387 | 374 | 349 | Model |
+| Al Wakrah | 484 | 164 | 191 | Baseline |
+| Lusail | 883 | 274 | 188 | Model |
+
+The target is revenue per branch per full Monday to Sunday week. Days are too noisy, because a branch takes one to three orders on a day it trades, and some days none. Part-weeks at the end of the data and at Lusail's opening are left out. The last 13 full weeks, 2025-09-29 to 2025-12-28, are held back, and both methods see only the weeks before that and forecast the whole period in one go. Whichever has the lower average error across all branch weeks wins, and a test checks that changing the held-back revenue does not change either forecast.
+
+The baseline is the average of the last 4 weeks before the test, held flat. Same week last year is not used, because Ramadan moves and Lusail has no full year before the test. The model is a straight-line fit on log revenue for each branch, with a trend and the share of each week in Ramadan, Eid, the summer holidays and the days after payday, all of which are known in advance.
+
+The model's advantage is knowing the calendar, and this test period has almost no events in it. That leaves its trend, which carried Al Rayyan's fast growth forward and over-forecast that branch by 52.1%. The model was closer at three of the five branches, but its Al Rayyan miss outweighed them. The same design, unchanged, lost on 9 of 10 other seeds, with a median error about 10% above the baseline. To repeat that, run `python seed.py --db other.db --seed 1`, then `python forecast.py --db other.db`, for seeds 1 to 10.
+
+Because the baseline won, it sets the next four weeks shown on the dashboard. The model was left as it was once the test had been run, since changing it and scoring it on the same weeks would no longer be a fair test. The design was chosen on a validation window inside the training data, where the model did win, but that window was the summer, when knowing the calendar helps most.
+
+![Sales forecast page](docs/screenshots/forecast.png)
+
+## Project layout
+
+```
+schema.sql                  tables, keys, checks and indexes
+seed.py                     builds retail.db
+run.py                      runs the queries and prints tables
+queries/                    one .sql file per business question
+queries/manager/            parameterised .sql files for the branch manager page, including what changed
+queries/forecast/           .sql files that feed the forecast
+forecast.py                 the weekly forecast, its baseline and the held-back test
+app.py                      Streamlit entry point
+dashboard/                  data loading, written findings, charts and pages
+tools/take_screenshots.py   captures the README screenshots with headless Edge
+docs/screenshots/           those screenshots
+tests/                      pytest tests for the data, the queries, run.py and the dashboard
+```
 
 ## License
 
